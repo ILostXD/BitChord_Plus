@@ -82,6 +82,21 @@ enum class SourceKind(
     ),
 
     /**
+     * The user's own Navidrome / Subsonic-compatible server, spoken to directly —
+     * see [SubsonicSource]. Fast and local, so worth asking ahead of time.
+     */
+    SUBSONIC(
+        label = "Navidrome / Subsonic",
+        detail = "Your own music server (Navidrome, Gonic, Airsonic, Jellyfin's Subsonic plugin). " +
+            "Matching tracks play from your own files.",
+        labels = listOf("Your library", "Lossless"),
+        needsServer = true,
+        canServeLossless = true,
+        worthPrefetching = true,
+        rank = 0,
+    ),
+
+    /**
      * A module index the user pointed at themselves.
      *
      * Legacy, and no longer offered: the sources screen has no way to add one

@@ -149,7 +149,6 @@ import com.music.bitchord.ui.components.isGlassSupported
 import com.music.bitchord.ui.components.languageDisplayNameRes
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.SearchField
-import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.performance.resolvePerformanceRefreshRate
 import com.music.bitchord.ui.performance.supportedPerformanceRefreshRates
 import com.music.bitchord.data.model.Account
@@ -158,6 +157,7 @@ import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.scrobbling.LastFM
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.settings.CollectionBackground
 import com.music.bitchord.data.settings.OutputPcmMode
 import com.music.bitchord.data.settings.BitPerfectMode
 import com.music.bitchord.playback.AudioOutputStatus
@@ -255,7 +255,14 @@ fun SettingsScreen(
     val signatureApiEnabled by AppSettings.signatureApiEnabled.collectAsStateWithLifecycle()
     val signatureApiUrl by AppSettings.signatureApiUrl.collectAsStateWithLifecycle()
     val fullBleedArtwork by AppSettings.fullBleedArtwork.collectAsStateWithLifecycle()
+    val autoArtworkLayout by AppSettings.autoArtworkLayout.collectAsStateWithLifecycle()
     val fullBleedDetailArtwork by AppSettings.fullBleedDetailArtwork.collectAsStateWithLifecycle()
+    val autoDetailArtworkLayout by AppSettings.autoDetailArtworkLayout.collectAsStateWithLifecycle()
+    val collectionBackground by AppSettings.collectionBackground.collectAsStateWithLifecycle()
+    val miniPlayerSize by AppSettings.miniPlayerSize.collectAsStateWithLifecycle()
+    val navBarSize by AppSettings.navBarSize.collectAsStateWithLifecycle()
+    val searchInNavBar by AppSettings.searchInNavBar.collectAsStateWithLifecycle()
+    val serverAutoDownload by AppSettings.serverAutoDownload.collectAsStateWithLifecycle()
     val playerTheme by AppSettings.playerTheme.collectAsStateWithLifecycle()
     val syncedLyrics by AppSettings.syncedLyrics.collectAsStateWithLifecycle()
     val lyricsSources by AppSettings.lyricsSources.collectAsStateWithLifecycle()
@@ -1124,9 +1131,19 @@ fun SettingsScreen(
                             IosSwitch(
                                 checked = fullBleedArtwork,
                                 onCheckedChange = AppSettings::setFullBleedArtwork,
+                                enabled = !autoArtworkLayout,
                             )
                         },
-                        onClick = { AppSettings.setFullBleedArtwork(!fullBleedArtwork) },
+                        onClick = { if (!autoArtworkLayout) AppSettings.setFullBleedArtwork(!fullBleedArtwork) },
+                    )
+                }
+                val autoArtworkTitle = stringResource(R.string.auto_artwork_layout)
+                row(autoArtworkTitle, "artwork", "player", "automatic", "animated", "canvas", divided = false) {
+                    SettingsSubRow(
+                        title = autoArtworkTitle,
+                        subtitle = stringResource(R.string.auto_artwork_layout_subtitle),
+                        checked = autoArtworkLayout,
+                        onCheckedChange = AppSettings::setAutoArtworkLayout,
                     )
                 }
             }
@@ -1143,9 +1160,72 @@ fun SettingsScreen(
                         IosSwitch(
                             checked = fullBleedDetailArtwork,
                             onCheckedChange = AppSettings::setFullBleedDetailArtwork,
+                            enabled = !autoDetailArtworkLayout,
                         )
                     },
-                    onClick = { AppSettings.setFullBleedDetailArtwork(!fullBleedDetailArtwork) },
+                    onClick = { if (!autoDetailArtworkLayout) AppSettings.setFullBleedDetailArtwork(!fullBleedDetailArtwork) },
+                )
+            }
+            val autoDetailArtworkTitle = stringResource(R.string.auto_artwork_layout)
+            row(autoDetailArtworkTitle, "artwork", "album", "automatic", "animated", "canvas", divided = false) {
+                SettingsSubRow(
+                    title = autoDetailArtworkTitle,
+                    subtitle = stringResource(R.string.auto_detail_artwork_layout_subtitle),
+                    checked = autoDetailArtworkLayout,
+                    onCheckedChange = AppSettings::setAutoDetailArtworkLayout,
+                )
+            }
+            val pageBackgroundTitle = stringResource(R.string.page_background)
+            row(pageBackgroundTitle, "album", "playlist", "background", "blur", "apple", "glow", "classic") {
+                SettingsRow(
+                    icon = SfIcons.Gradient,
+                    title = pageBackgroundTitle,
+                    subtitle = stringResource(R.string.page_background_subtitle),
+                )
+                SegmentedControl(
+                    options = listOf(
+                        stringResource(R.string.page_background_blur),
+                        stringResource(R.string.page_background_apple),
+                        stringResource(R.string.page_background_classic),
+                    ),
+                    selectedIndex = CollectionBackground.entries.indexOf(collectionBackground),
+                    onSelect = { AppSettings.setCollectionBackground(CollectionBackground.entries[it]) },
+                    modifier = Modifier.padding(start = ROW_INSET, end = ROW_INSET, bottom = 14.dp),
+                )
+            }
+            val sizeOptions = listOf(
+                stringResource(R.string.size_small),
+                stringResource(R.string.size_medium),
+                stringResource(R.string.size_large),
+            )
+            val miniPlayerSizeTitle = stringResource(R.string.mini_player_size)
+            row(miniPlayerSizeTitle, "mini player", "size", "small", "large", "bar") {
+                SettingsRow(icon = SfIcons.Gradient, title = miniPlayerSizeTitle)
+                SegmentedControl(
+                    options = sizeOptions,
+                    selectedIndex = miniPlayerSize.ordinal,
+                    onSelect = { AppSettings.setMiniPlayerSize(com.music.bitchord.data.settings.BarSize.entries[it]) },
+                    modifier = Modifier.padding(start = ROW_INSET, end = ROW_INSET, bottom = 14.dp),
+                )
+            }
+            val navBarSizeTitle = stringResource(R.string.nav_bar_size)
+            row(navBarSizeTitle, "navigation", "tab bar", "size", "small", "large", "bar") {
+                SettingsRow(icon = SfIcons.Gradient, title = navBarSizeTitle)
+                SegmentedControl(
+                    options = sizeOptions,
+                    selectedIndex = navBarSize.ordinal,
+                    onSelect = { AppSettings.setNavBarSize(com.music.bitchord.data.settings.BarSize.entries[it]) },
+                    modifier = Modifier.padding(start = ROW_INSET, end = ROW_INSET, bottom = 14.dp),
+                )
+            }
+            val searchInNavBarTitle = stringResource(R.string.search_in_nav_bar)
+            row(searchInNavBarTitle, "navigation", "tab bar", "search", "button", "separate") {
+                SettingsRow(
+                    icon = SfIcons.Gradient,
+                    title = searchInNavBarTitle,
+                    subtitle = stringResource(R.string.search_in_nav_bar_subtitle),
+                    trailing = { IosSwitch(checked = searchInNavBar, onCheckedChange = AppSettings::setSearchInNavBar) },
+                    onClick = { AppSettings.setSearchInNavBar(!searchInNavBar) },
                 )
             }
             val playerThemeTitle = stringResource(R.string.player_theme)
@@ -2185,7 +2265,7 @@ internal fun AccountCard(
                 model = account.thumbnailUrl,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
-                modifier = Modifier.size(52.dp).clip(CircleShape).thumbnailBorder(CircleShape),
+                modifier = Modifier.size(52.dp).clip(CircleShape),
             )
         } else {
             Box(
@@ -2672,6 +2752,7 @@ internal fun SettingsSubRow(
                 )
             }
         }
+        Spacer(Modifier.width(16.dp))
         IosSwitch(
             checked = checked,
             onCheckedChange = onCheckedChange,

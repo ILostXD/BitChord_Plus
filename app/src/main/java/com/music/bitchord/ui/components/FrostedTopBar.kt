@@ -32,6 +32,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.CornerBasedShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.foundation.clickable
 import com.music.bitchord.ui.icons.SfIcons
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material3.HorizontalDivider
@@ -561,16 +563,14 @@ fun TopBarAccountButton(
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
                     .size(AVATAR_SIZE)
-                    .clip(CircleShape)
-                    .thumbnailBorder(CircleShape),
+                    .clip(CircleShape),
             )
         } else {
             Box(
                 modifier = Modifier
                     .size(AVATAR_SIZE)
                     .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .thumbnailBorder(CircleShape),
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
@@ -686,3 +686,62 @@ private val PUCK_OVERSHOOT = 20.dp
  * glyph does, and at 24 it sat heavier in the bar than the wordmark opposite it.
  */
 private val AVATAR_SIZE = 28.dp
+
+/**
+ * The album page's find-in-list field, floating under the bar. Drawn in the
+ * bar's own layer (not the page's), so it wears the exact liquid glass of the
+ * back button and actions: inside the page it would sample itself and recurse.
+ */
+@Composable
+fun FloatingSearchPill(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    onClose: () -> Unit,
+    placeholder: String,
+    hazeState: HazeState?,
+    modifier: Modifier = Modifier,
+) {
+    val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
+    val useLiquidGlass = LocalLiquidGlassEnabled.current && isGlassSupported()
+    val ink = if (useLiquidGlass && !reduceDynamicBlur) glassContentColor() else MaterialTheme.colorScheme.onSurface
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = BAR_GUTTER)
+            .height(TOP_CONTROL_SIZE)
+            .then(artworkPageSurface(shape = CircleShape, hazeState = hazeState))
+            .padding(horizontal = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(com.music.bitchord.ui.icons.BitChordIcons.Search, contentDescription = null, tint = ink.copy(alpha = 0.7f), modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(10.dp))
+        Box(Modifier.weight(1f)) {
+            if (query.isEmpty()) {
+                Text(placeholder, style = MaterialTheme.typography.bodyLarge, color = ink.copy(alpha = 0.6f), maxLines = 1)
+            }
+            androidx.compose.foundation.text.BasicTextField(
+                value = query,
+                onValueChange = onQueryChange,
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodyLarge.copy(color = ink),
+                cursorBrush = androidx.compose.ui.graphics.SolidColor(ink),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        Box(
+            modifier = Modifier
+                .size(30.dp)
+                .clip(CircleShape)
+                // Clearing and closing are one gesture: an empty filter has nothing left to do.
+                .clickable { if (query.isEmpty()) onClose() else onQueryChange("") },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Close,
+                contentDescription = stringResource(if (query.isEmpty()) R.string.close_search else R.string.clear_search),
+                tint = ink.copy(alpha = 0.7f),
+                modifier = Modifier.size(18.dp),
+            )
+        }
+    }
+}

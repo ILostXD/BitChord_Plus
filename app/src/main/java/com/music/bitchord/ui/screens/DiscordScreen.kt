@@ -65,7 +65,6 @@ import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.ui.components.ChoiceAlert
 import com.music.bitchord.ui.components.DiscordTokenAlert
 import com.music.bitchord.ui.components.TextValueAlert
-import com.music.bitchord.ui.components.thumbnailBorder
 import com.my.kizzy.rpc.KizzyRPC
 import dev.chrisbanes.haze.HazeState
 import kotlinx.coroutines.Dispatchers
@@ -425,7 +424,7 @@ private fun DiscordAccountCard(
                     model = avatar,
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
-                    modifier = Modifier.size(52.dp).clip(CircleShape).thumbnailBorder(CircleShape),
+                    modifier = Modifier.size(52.dp).clip(CircleShape),
                 )
             } else {
                 Box(
@@ -571,7 +570,7 @@ private fun RichPresencePreview(
                     model = song.artworkAt(CARD_ART_PX),
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
-                    modifier = Modifier.size(84.dp).clip(artShape).thumbnailBorder(artShape),
+                    modifier = Modifier.size(84.dp).clip(artShape),
                 )
             } else {
                 Box(

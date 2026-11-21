@@ -89,7 +89,6 @@ import com.music.bitchord.ui.components.SearchPlayingBars
 import com.music.bitchord.ui.components.SongRow
 import com.music.bitchord.ui.components.longPressMenuClickable
 import com.music.bitchord.ui.components.rememberRemoteArtworkUrl
-import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.icons.BitChordIcons
 import com.music.bitchord.ui.theme.ArtworkPalette
 
@@ -512,8 +511,7 @@ private fun SongGridCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(1f)
-                .clip(CARD_SHAPE)
-                .thumbnailBorder(CARD_SHAPE),
+                .clip(CARD_SHAPE),
             contentAlignment = Alignment.Center,
         ) {
             CoverPlaceholder(Icons.Rounded.MusicNote, Modifier.fillMaxSize())
@@ -556,7 +554,7 @@ private fun SongGridCard(
 @Composable
 private fun ArtistAvatar(group: LocalGroup, modifier: Modifier) {
     val art = remember(group.songs) { group.songs.firstNotNullOfOrNull { it.thumbnailUrl } }
-    Box(modifier.clip(CircleShape).thumbnailBorder(CircleShape)) {
+    Box(modifier.clip(CircleShape)) {
         CoverPlaceholder(Icons.Rounded.Person, Modifier.fillMaxSize(), iconFraction = 0.5f)
         if (art != null) {
             AsyncImage(
@@ -693,8 +691,7 @@ private fun AlbumGridCard(
             Modifier
                 .fillMaxWidth()
                 .aspectRatio(1f)
-                .clip(CARD_SHAPE)
-                .thumbnailBorder(CARD_SHAPE),
+                .clip(CARD_SHAPE),
         ) {
             CoverPlaceholder(group.placeholderIcon(), Modifier.fillMaxSize())
             if (art != null) {
@@ -747,7 +744,7 @@ private fun AlbumRow(
             .padding(horizontal = PAGE_GUTTER, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(Modifier.size(52.dp).clip(shape).thumbnailBorder(shape)) {
+        Box(Modifier.size(52.dp).clip(shape)) {
             CoverPlaceholder(group.placeholderIcon(), Modifier.fillMaxSize(), iconFraction = 0.46f)
             if (art != null) {
                 AsyncImage(

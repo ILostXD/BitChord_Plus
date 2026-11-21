@@ -585,6 +585,13 @@ object AppSettings {
     val fullBleedArtwork = MutableStateFlow(true)
 
     /**
+     * Lets the artwork's own shape decide instead of [fullBleedArtwork], the way
+     * Apple Music does: a tall clip (Spotify's 9:16, Apple's 3:4) runs full
+     * screen, while square clips and still covers stay in the square sleeve.
+     */
+    val autoArtworkLayout = MutableStateFlow(false)
+
+    /**
      * The album and playlist page's answer to [fullBleedArtwork]: the sleeve
      * runs edge to edge off the top of the screen and dissolves into the page
      * colour, instead of sitting framed in the middle. Everything under it —
@@ -592,6 +599,23 @@ object AppSettings {
      * default, the framed sleeve being the page's own look.
      */
     val fullBleedDetailArtwork = MutableStateFlow(false)
+
+    /** What album and playlist pages are drawn on — see [CollectionBackground]. */
+    val collectionBackground = MutableStateFlow(CollectionBackground.BLUR)
+
+    /** Glaze's bar options: the mini player's and the tab bar's size, and Search as a tab or a circle of its own. */
+    val miniPlayerSize = MutableStateFlow(BarSize.MEDIUM)
+    val navBarSize = MutableStateFlow(BarSize.MEDIUM)
+    val searchInNavBar = MutableStateFlow(false)
+
+    /** Whether a song added to a playlist is also downloaded into the music server — see [ServerAutoDownload]. */
+    val serverAutoDownload = MutableStateFlow(ServerAutoDownload.SONG)
+
+    /** The YouTube Music playlists (by browse id) kept in sync with the music server. */
+    val serverSyncedPlaylists = MutableStateFlow<Set<String>>(emptySet())
+
+    /** [autoArtworkLayout] for album pages: a 3:4 motion cover runs full screen, everything else stays framed. */
+    val autoDetailArtworkLayout = MutableStateFlow(false)
 
     /**
      * What the main player stands on below the artwork.
@@ -1061,7 +1085,21 @@ object AppSettings {
         signatureApiEnabled.value = prefs.getBoolean(KEY_SIGNATURE_API_ENABLED, false)
         signatureApiUrl.value = normalizeSignatureApiUrl(prefs.getString(KEY_SIGNATURE_API_URL, "").orEmpty())
         fullBleedArtwork.value = prefs.getBoolean(KEY_FULL_BLEED_ARTWORK, true)
+        autoArtworkLayout.value = prefs.getBoolean(KEY_AUTO_ARTWORK_LAYOUT, false)
         fullBleedDetailArtwork.value = prefs.getBoolean(KEY_FULL_BLEED_DETAIL_ARTWORK, false)
+        autoDetailArtworkLayout.value = prefs.getBoolean(KEY_AUTO_DETAIL_ARTWORK_LAYOUT, false)
+        collectionBackground.value = runCatching {
+            CollectionBackground.valueOf(prefs.getString(KEY_COLLECTION_BACKGROUND, null).orEmpty())
+        }.getOrDefault(CollectionBackground.BLUR)
+        miniPlayerSize.value = runCatching { BarSize.valueOf(prefs.getString(KEY_MINI_PLAYER_SIZE, null).orEmpty()) }
+            .getOrDefault(BarSize.MEDIUM)
+        navBarSize.value = runCatching { BarSize.valueOf(prefs.getString(KEY_NAV_BAR_SIZE, null).orEmpty()) }
+            .getOrDefault(BarSize.MEDIUM)
+        searchInNavBar.value = prefs.getBoolean(KEY_SEARCH_IN_NAV_BAR, false)
+        serverAutoDownload.value = runCatching {
+            ServerAutoDownload.valueOf(prefs.getString(KEY_SERVER_AUTO_DOWNLOAD, null).orEmpty())
+        }.getOrDefault(ServerAutoDownload.SONG)
+        serverSyncedPlaylists.value = prefs.getStringSet(KEY_SERVER_SYNCED_PLAYLISTS, emptySet()).orEmpty().toSet()
         // The old legacy mesh switch answers until a theme has been picked.
         playerTheme.value = runCatching {
             PlayerTheme.valueOf(prefs.getString(KEY_PLAYER_THEME, null).orEmpty())
@@ -1706,9 +1744,50 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_FULL_BLEED_ARTWORK, value).apply()
     }
 
+    fun setAutoArtworkLayout(value: Boolean) {
+        autoArtworkLayout.value = value
+        prefs.edit().putBoolean(KEY_AUTO_ARTWORK_LAYOUT, value).apply()
+    }
+
     fun setFullBleedDetailArtwork(value: Boolean) {
         fullBleedDetailArtwork.value = value
         prefs.edit().putBoolean(KEY_FULL_BLEED_DETAIL_ARTWORK, value).apply()
+    }
+
+    fun setCollectionBackground(value: CollectionBackground) {
+        collectionBackground.value = value
+        prefs.edit().putString(KEY_COLLECTION_BACKGROUND, value.name).apply()
+    }
+
+    fun setMiniPlayerSize(value: BarSize) {
+        miniPlayerSize.value = value
+        prefs.edit().putString(KEY_MINI_PLAYER_SIZE, value.name).apply()
+    }
+
+    fun setNavBarSize(value: BarSize) {
+        navBarSize.value = value
+        prefs.edit().putString(KEY_NAV_BAR_SIZE, value.name).apply()
+    }
+
+    fun setSearchInNavBar(value: Boolean) {
+        searchInNavBar.value = value
+        prefs.edit().putBoolean(KEY_SEARCH_IN_NAV_BAR, value).apply()
+    }
+
+    fun toggleServerSyncedPlaylist(browseId: String) {
+        val next = serverSyncedPlaylists.value.let { if (browseId in it) it - browseId else it + browseId }
+        serverSyncedPlaylists.value = next
+        prefs.edit().putStringSet(KEY_SERVER_SYNCED_PLAYLISTS, next).apply()
+    }
+
+    fun setServerAutoDownload(value: ServerAutoDownload) {
+        serverAutoDownload.value = value
+        prefs.edit().putString(KEY_SERVER_AUTO_DOWNLOAD, value.name).apply()
+    }
+
+    fun setAutoDetailArtworkLayout(value: Boolean) {
+        autoDetailArtworkLayout.value = value
+        prefs.edit().putBoolean(KEY_AUTO_DETAIL_ARTWORK_LAYOUT, value).apply()
     }
 
     fun setPlayerTheme(value: PlayerTheme) {
@@ -2319,7 +2398,15 @@ object AppSettings {
     private const val KEY_SIGNATURE_API_ENABLED = "signature_api_enabled"
     private const val KEY_SIGNATURE_API_URL = "signature_api_url"
     private const val KEY_FULL_BLEED_ARTWORK = "full_bleed_artwork"
+    private const val KEY_AUTO_ARTWORK_LAYOUT = "auto_artwork_layout"
     private const val KEY_FULL_BLEED_DETAIL_ARTWORK = "full_bleed_detail_artwork"
+    private const val KEY_AUTO_DETAIL_ARTWORK_LAYOUT = "auto_detail_artwork_layout"
+    private const val KEY_COLLECTION_BACKGROUND = "collection_background"
+    private const val KEY_SERVER_AUTO_DOWNLOAD = "server_auto_download"
+    private const val KEY_SERVER_SYNCED_PLAYLISTS = "server_synced_playlists"
+    private const val KEY_MINI_PLAYER_SIZE = "mini_player_size"
+    private const val KEY_NAV_BAR_SIZE = "nav_bar_size"
+    private const val KEY_SEARCH_IN_NAV_BAR = "search_in_nav_bar"
     private const val KEY_PLAYER_THEME = "player_theme"
     private const val KEY_LEGACY_MESH_GRADIENT = "legacy_mesh_gradient"
     private const val KEY_LAST_PLAYER_SCREEN = "last_player_screen"
@@ -2384,3 +2471,30 @@ object AppSettings {
 
 
 
+
+
+/** The page behind an album or playlist's framed cover. A 3:4 full-screen cover always sits on a plain colour. */
+enum class CollectionBackground {
+    /** The cover blurred across the page (Arpeggi). */
+    BLUR,
+
+    /** Apple Music's own colour for the cover, with Glaze's glow behind it. */
+    APPLE,
+
+    /** BitChord's original artwork-tinted page. */
+    CLASSIC,
+}
+
+/** What a song added to a playlist pulls into the music server through its companion. */
+enum class ServerAutoDownload {
+    OFF,
+
+    /** Just that song. */
+    SONG,
+
+    /** The whole album it is from (the song alone when it names no album). */
+    ALBUM,
+}
+
+/** Small, Medium or Large: Glaze's mini player (52 / 62 / 78dp) and tab bar (65 / 75 / 85dp with labels). */
+enum class BarSize { SMALL, MEDIUM, LARGE }

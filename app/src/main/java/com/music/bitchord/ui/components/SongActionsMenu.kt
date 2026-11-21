@@ -67,7 +67,6 @@ import com.music.bitchord.data.webdav.WebDavUploads
 import com.music.bitchord.download.DownloadState
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.playback.SleepTimer
-import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.theme.ArtworkPalette
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -115,6 +114,9 @@ fun SongActionsMenu(
      * re-runs it; the conflict dialog keeps that idempotent.
      */
     onUploadToWebDav: (() -> Unit)? = null,
+    /** Asks the music server's companion to download this track into the library; null without one. */
+    onRequestForServer: (() -> Unit)? = null,
+    requestForServerLabel: String = "",
     onToggleLike: () -> Unit,
     onToggleDislike: () -> Unit,
     onAddToPlaylist: () -> Unit,
@@ -338,6 +340,14 @@ fun SongActionsMenu(
             )
         }
         WebDavUploadRow(song, palette, isOffline, onUploadToWebDav)
+        onRequestForServer?.let {
+            ActionRow(
+                icon = SfIcons.Cloud,
+                label = requestForServerLabel,
+                accent = palette.accent,
+                onClick = it,
+            )
+        }
         onRemoveFromHistory?.let {
             ActionRow(
                 icon = SfIcons.History,
@@ -961,7 +971,6 @@ internal fun SheetTrackHeader(
             modifier = Modifier
                 .trackArtSize(52.dp, song.isVideo)
                 .clip(RoundedCornerShape(8.dp))
-                .thumbnailBorder(RoundedCornerShape(8.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant),
         )
         Spacer(Modifier.width(14.dp))

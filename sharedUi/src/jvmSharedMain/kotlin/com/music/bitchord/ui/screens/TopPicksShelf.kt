@@ -111,7 +111,6 @@ import com.music.bitchord.ui.components.SectionHeaderSkeleton
 import com.music.bitchord.ui.components.ShimmerBox
 import com.music.bitchord.ui.components.contextClick
 import com.music.bitchord.ui.components.longPressMenuClickable
-import com.music.bitchord.ui.components.thumbnailBorder
 import org.jetbrains.compose.resources.painterResource
 import org.jetbrains.compose.resources.stringResource
 import kotlin.math.PI
@@ -283,7 +282,6 @@ private fun TopPickCard(
         modifier = modifier
             .aspectRatio(TOP_PICK_RATIO)
             .clip(TopPickShape)
-            .thumbnailBorder(TopPickShape)
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .longPressMenuClickable(onClick = { onClick(pick, text.title) }, onLongClick = longPress)
             .contextClick(longPress),
@@ -361,7 +359,7 @@ private fun TopPickCard(
                     .align(Alignment.TopEnd)
                     .padding(top = 12.dp, end = 12.dp)
                     .height(15.dp)
-                    .aspectRatio(730f / 484f),
+                    .aspectRatio(1008f / 484f),
             )
         }
         CardCaption(text, eyebrowColor, Modifier.align(Alignment.BottomStart))
@@ -1603,8 +1601,7 @@ private fun MoodTile(mood: TopPickMood, onClick: (TopPickMood, String) -> Unit, 
             Modifier
                 .fillMaxWidth()
                 .aspectRatio(1f)
-                .clip(RoundedCornerShape(12.dp))
-                .thumbnailBorder(RoundedCornerShape(12.dp)),
+                .clip(RoundedCornerShape(12.dp)),
         ) {
             // Still. A shelf of tiles each breathing on its own loop kept the
             // page under the glass bars redrawing — and the bars' blur with
@@ -1619,7 +1616,7 @@ private fun MoodTile(mood: TopPickMood, onClick: (TopPickMood, String) -> Unit, 
                     .align(Alignment.TopEnd)
                     .padding(top = 8.dp, end = 8.dp)
                     .height(11.dp)
-                    .aspectRatio(730f / 484f),
+                    .aspectRatio(1008f / 484f),
             )
         }
         Spacer(Modifier.height(10.dp))

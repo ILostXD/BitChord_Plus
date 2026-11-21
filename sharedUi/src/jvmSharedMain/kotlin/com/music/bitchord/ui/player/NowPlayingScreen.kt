@@ -310,6 +310,9 @@ private const val MESH_SEAM_MOVE_MS = 320
  */
 private const val PORTRAIT_SCRIM_MAX_ASPECT = 0.7f
 
+/** Auto artwork layout: a clip narrower than this (width / height) counts as tall. 3:4 = 0.75. */
+private const val AUTO_FULLSCREEN_MAX_ASPECT = 0.9f
+
 private val PortraitClipScrim = Brush.verticalGradient(
     0f to Color.Transparent,
     0.40f to Color.Transparent,
@@ -941,13 +944,12 @@ fun NowPlayingScreen(
     // Square video thumbnails: the picture takes the sleeve's own slot, cropped
     // to it, in place of the full-width box at the video's shape.
     val squareVideo = videoMode && VideoThumbnails.square
-    val canvas = rememberCanvasArtwork(song)?.takeUnless { videoMode }?.let {
-        // Apple's 3:4 rendition runs under the whole phone screen, the way its
-        // own player shows it; the square one stays the fallback.
-        val tall = it.portraitUrl
-        if (tall != null && playerFillsWindow(windowWidth)) {
-            it.copy(url = tall, fallbackUrl = it.url, portraitUrl = null)
-        } else it
+    val foundCanvas = rememberCanvasArtwork(song)?.takeUnless { videoMode }
+    // Apple's 3:4 rendition runs under the whole phone screen, the way its
+    // own player shows it; the square one stays the fallback.
+    val tallClip = foundCanvas?.portraitUrl != null && playerFillsWindow(windowWidth)
+    val canvas = foundCanvas?.let {
+        if (tallClip) it.copy(url = it.portraitUrl!!, fallbackUrl = it.url, portraitUrl = null) else it
     }
     // Whether the picture has a frame on screen; the still frame shows until then.
     var videoRendered by remember(song.videoId) { mutableStateOf(false) }
@@ -1399,9 +1401,14 @@ fun NowPlayingScreen(
     // still-art full-bleed preference. Other providers and static artwork keep
     // answering to that preference exactly as before.
     // A music video sits in the card's place at its own 16:9, never full bleed.
+    // Auto: the artwork's shape decides — tall clips go full screen, square
+    // clips and still covers keep the sleeve. canvasAspect covers tall clips
+    // from providers that don't label a portrait rendition.
+    val autoArtwork by PlayerSettings.autoArtworkLayout.collectAsStateWithLifecycle()
+    val tallArtwork = tallClip || (canvasAspect > 0f && canvasAspect < AUTO_FULLSCREEN_MAX_ASPECT)
     val heroMode = !videoMode && (
         spotifyCanvasOnPhone ||
-            (fullBleedArt && playerFillsWindow(windowWidth))
+            (playerFillsWindow(windowWidth) && if (autoArtwork) tallArtwork else fullBleedArt)
         )
 
     // Whether there's a still image to blow out — a placeholder tile is a card
@@ -3445,6 +3452,8 @@ fun NowPlayingScreen(
                                         // The same stand-in as the banner's clip; here
                                         // the still is drawn by the sleeve around it.
                                         presentationAlpha = { if (stillTakesOver()) 0f else 1f },
+                                        // Lets Auto layout spot a tall clip and move it full screen.
+                                        onAspectRatioChanged = { canvasAspect = it },
                                         startPositionMs = stillStart?.positionMs ?: 0L,
                                         revealInstantly = stillStart != null,
                                         captureStill = stillMoving,

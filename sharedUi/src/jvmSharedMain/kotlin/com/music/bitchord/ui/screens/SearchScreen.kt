@@ -85,7 +85,6 @@ import com.music.bitchord.ui.components.ROW_DIVIDER_INSET
 import com.music.bitchord.ui.components.SearchField
 import com.music.bitchord.ui.components.SongRow
 import com.music.bitchord.ui.components.SearchPlayingBars
-import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.components.songListSkeleton
 import java.util.Locale
 
@@ -768,7 +767,6 @@ private fun TypeaheadSongRow(
                 modifier = Modifier
                     .matchParentSize()
                     .clip(RoundedCornerShape(8.dp))
-                    .thumbnailBorder(RoundedCornerShape(8.dp))
                     .background(MaterialTheme.colorScheme.surfaceVariant),
             )
             if (isCurrent && isPlaying) SearchPlayingBars(Modifier.align(Alignment.Center))
@@ -962,7 +960,6 @@ private fun RecentSearchEntityRow(
                     modifier = Modifier
                         .size(52.dp)
                         .clip(RoundedCornerShape(8.dp))
-                        .thumbnailBorder(RoundedCornerShape(8.dp))
                         .background(MaterialTheme.colorScheme.surfaceVariant),
                 )
                 if (isCurrent && isPlaying) {
@@ -1026,10 +1023,6 @@ private fun BrowseRow(item: BrowseItem, onClick: () -> Unit, onLongPress: (() ->
             modifier = Modifier
                 .size(52.dp)
                 .clip(
-                    if (item.type == BrowseType.ARTIST) CircleShape
-                    else RoundedCornerShape(8.dp),
-                )
-                .thumbnailBorder(
                     if (item.type == BrowseType.ARTIST) CircleShape
                     else RoundedCornerShape(8.dp),
                 )

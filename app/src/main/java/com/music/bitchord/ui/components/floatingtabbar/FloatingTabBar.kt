@@ -403,6 +403,17 @@ interface FloatingTabBarScope {
         onClick: () -> Unit,
         indication: (@Composable () -> Indication)? = { LocalIndication.current }
     )
+
+    /**
+     * A circle shown at the end of the collapsed row only, for a tab that sits in the
+     * expanded pill like the rest: it is never the collapsed row's own tab.
+     */
+    fun inlineStandaloneTab(
+        key: Any,
+        icon: @Composable () -> Unit,
+        onClick: () -> Unit,
+        indication: (@Composable () -> Indication)? = { LocalIndication.current }
+    )
 }
 
 @Composable
@@ -420,7 +431,7 @@ private fun SharedTransitionScope.InlineBar(
     animatedVisibilityScope: AnimatedVisibilityScope
 ) {
     val inlineTab = scope.getInlineTab(selectedTabKey)
-    val standaloneTab = scope.standaloneTab
+    val standaloneTab = scope.standaloneTab ?: scope.inlineStandaloneTab
     val hasInlineTab = inlineTab != null
 
     // With an accessory the row spans the full width ([tab][accessory][standalone],
@@ -1153,10 +1164,12 @@ private class FloatingTabBarScopeImpl : FloatingTabBarScope {
     val tabs = mutableStateListOf<FloatingTabBarTab>()
     var standaloneTab: FloatingTabBarTab? by mutableStateOf(null)
         private set
+    var inlineStandaloneTab: FloatingTabBarTab? by mutableStateOf(null)
+        private set
     private var inlineTab: FloatingTabBarTab? = null
 
     fun getInlineTab(selectedTabKey: Any?): FloatingTabBarTab? {
-        return if (selectedTabKey != standaloneTab?.key) {
+        return if (selectedTabKey != (standaloneTab ?: inlineStandaloneTab)?.key) {
             val selectedTab = tabs.find { it.key == selectedTabKey }
             if (selectedTab != null) {
                 inlineTab = selectedTab
@@ -1187,6 +1200,15 @@ private class FloatingTabBarScopeImpl : FloatingTabBarScope {
         )
     }
     
+    override fun inlineStandaloneTab(
+        key: Any,
+        icon: @Composable () -> Unit,
+        onClick: () -> Unit,
+        indication: (@Composable () -> Indication)?
+    ) {
+        inlineStandaloneTab = FloatingTabBarTab(key = key, title = {}, icon = icon, onClick = onClick, indication = indication)
+    }
+
     override fun standaloneTab(
         key: Any,
         icon: @Composable () -> Unit,

@@ -170,6 +170,7 @@ import com.music.bitchord.ui.navigation.AppRoute
 import com.music.bitchord.ui.screens.EqualizerPresetPage
 import com.music.bitchord.ui.screens.SettingsChoicePage
 import com.music.bitchord.ui.components.SpotifyImportAlert
+import com.music.bitchord.ui.components.ImportPlaylistAlert
 import com.music.bitchord.ui.screens.WearOsScreen
 import com.music.bitchord.ui.screens.AccountAndScrobblingScreen
 import com.music.bitchord.ui.screens.DiscordDialog
@@ -191,6 +192,7 @@ import com.music.bitchord.ui.screens.SourcesScreen
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.ui.screens.SpotifyCanvasAuthScreen
 import com.music.bitchord.ui.screens.SpotifyLibraryScreen
+import com.music.bitchord.data.sources.ServerLibrary
 import com.music.bitchord.data.spotify.SPOTIFY_PAGE_PREFIX
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.LinkRequest
@@ -287,6 +289,9 @@ import com.music.bitchord.ui.components.TopBarDownloadButton
 import com.music.bitchord.ui.components.optimizedHazeEffect
 import com.music.bitchord.ui.components.topBarContentPadding
 import com.music.bitchord.ui.components.topBarHeight
+import com.music.bitchord.ui.components.FloatingSearchPill
+import com.music.bitchord.ui.screens.rememberAlbumInfo
+import com.music.bitchord.ui.screens.rememberPagePalette
 import com.music.bitchord.ui.components.AppLanguageDialog
 import com.music.bitchord.ui.components.TranslationLanguageDialog
 import com.music.bitchord.ui.components.LyricsSourcesDialog
@@ -744,6 +749,7 @@ private fun BitChordApp(
     var offlinePlaylistTarget by remember { mutableStateOf<Song?>(null) }
     var creatingOfflinePlaylist by remember { mutableStateOf(false) }
     var showSpotifyImportDialog by remember { mutableStateOf(false) }
+    var showImportChooser by remember { mutableStateOf(false) }
     // Which album or playlist the collection menu is open on, or null when it
     // is shut. One slot for every surface that can open it — the shelves on
     // three tabs, the search rows, the artist page's carousels, the release
@@ -849,15 +855,35 @@ private fun BitChordApp(
     )
 
     val homeState by viewModel.home.collectAsStateWithLifecycle()
+    // Glaze's "Upcoming" shelf: albums due from starred artists, and Pre-Saves.
+    val upcomingReleases by com.music.bitchord.data.sources.GlazeCompanion.upcoming.collectAsStateWithLifecycle()
+    val upcomingTitle = stringResource(R.string.upcoming_releases)
+    val upcomingShelf = remember(upcomingReleases) {
+        upcomingReleases.takeIf { it.isNotEmpty() }?.let { releases ->
+            HomeShelf(
+                title = upcomingTitle,
+                items = releases.map { release ->
+                    ShelfItem(
+                        title = release.title,
+                        subtitle = release.artist,
+                        thumbnailUrl = release.cover,
+                        videoId = null,
+                        browseId = com.music.bitchord.data.sources.GlazeCompanion.RELEASE_PREFIX + release.id,
+                        badge = release.saved,
+                    )
+                },
+            )
+        }
+    }
     val hideRecents by AppSettings.hideRecents.collectAsStateWithLifecycle()
     val hideHomeVideos by AppSettings.hideHomeVideos.collectAsStateWithLifecycle()
     val hideTopPicks by AppSettings.hideTopPicks.collectAsStateWithLifecycle()
     val hideHomeMoods by AppSettings.hideHomeMoods.collectAsStateWithLifecycle()
     // Only what Home draws: Top Picks reads the unfiltered feed from the view model.
-    val visibleHomeState = remember(homeState, hideHomeVideos, hideRecents) {
+    val visibleHomeState = remember(homeState, hideHomeVideos, hideRecents, upcomingShelf) {
         val loaded = homeState as? UiState.Success
-        if (loaded != null && (hideHomeVideos || hideRecents)) {
-            var shelves = loaded.data
+        if (loaded != null && (hideHomeVideos || hideRecents || upcomingShelf != null)) {
+            var shelves = listOfNotNull(upcomingShelf) + loaded.data
             if (hideRecents) shelves = shelves.filterNot { it.title == YtMusicRepository.RECENT_TITLE }
             if (hideHomeVideos) shelves = shelves.withoutVideos()
             UiState.Success(shelves)
@@ -987,6 +1013,9 @@ private fun BitChordApp(
     // sort control because the button that opens it sits in the top bar beside
     // it, and reset with the page so a filter never follows you to the next one.
     var detailSearching by rememberSaveable(topDetail?.browseId) { mutableStateOf(false) }
+    // The find-in-list text, held here because its field floats in the top bar's layer.
+    var detailQuery by rememberSaveable(topDetail?.browseId) { mutableStateOf("") }
+    LaunchedEffect(detailSearching) { if (!detailSearching) detailQuery = "" }
     val likeStatuses by viewModel.likeStatuses.collectAsStateWithLifecycle()
     // A device file's heart is the device's Liked playlist, not a YouTube
     // rating: the file has no identity there to rate. One rule for every
@@ -1128,6 +1157,60 @@ private fun BitChordApp(
     // control taken away — see [ListenTogether.State.controlsLocked].
     val hostOnlyMessage = stringResource(R.string.listen_together_host_only_notice)
     val showHostOnlyNotice: () -> Unit = { showQueueNotice(hostOnlyMessage) }
+    val serverDownloads by viewModel.serverDownloads.collectAsStateWithLifecycle()
+    // A request the companion paused to ask about: it already has something close.
+    val pendingReviews by viewModel.pendingReviews.collectAsStateWithLifecycle()
+    pendingReviews.firstOrNull()?.let { review ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = {},
+            title = { androidx.compose.material3.Text(stringResource(R.string.review_dialog_title, review.title)) },
+            text = { androidx.compose.material3.Text("${review.artist}\n${review.job.summary.orEmpty()}") },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = { viewModel.answerReview(review, true) }) {
+                    androidx.compose.material3.Text(stringResource(R.string.review_download))
+                }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { viewModel.answerReview(review, false) }) {
+                    androidx.compose.material3.Text(stringResource(R.string.review_keep))
+                }
+            },
+        )
+    }
+    // Re-read when Sources change, so a companion added there shows up at once.
+    val sourceConfigs by com.music.bitchord.data.sources.SourceRegistry.configs.collectAsStateWithLifecycle()
+    val companionServer = remember(sourceConfigs) { com.music.bitchord.data.sources.GlazeCompanion.server() }
+    // Mirror playlists into the music server: on start, when the setting or the
+    // companion changes (forced), and once the account's playlists have loaded.
+    val serverAutoDownload by AppSettings.serverAutoDownload.collectAsStateWithLifecycle()
+    val playlistsForSync by viewModel.playlists.collectAsStateWithLifecycle()
+    val syncedPlaylists by AppSettings.serverSyncedPlaylists.collectAsStateWithLifecycle()
+    LaunchedEffect(serverAutoDownload, syncedPlaylists, companionServer?.id) { viewModel.syncPlaylistsToServer(force = true) }
+    LaunchedEffect(playlistsForSync.size) { if (playlistsForSync.isNotEmpty()) viewModel.syncPlaylistsToServer(force = true) }
+    // Upcoming albums: the companion's (starred artists, Pre-Saves) plus those of every
+    // YouTube Music library artist the server also has.
+    val libraryArtistNames = remember(libraryState) {
+        (libraryState as? UiState.Success)?.data?.shelves.orEmpty()
+            .filter { it.title == "Artists" || it.title == "Subscriptions" }
+            .flatMap { shelf -> shelf.items.map { it.title } }
+    }
+    LaunchedEffect(companionServer?.id, libraryArtistNames) {
+        com.music.bitchord.data.sources.GlazeCompanion.libraryArtists = libraryArtistNames
+        com.music.bitchord.data.sources.GlazeCompanion.refreshUpcoming()
+    }
+    /** Sends an album to the music server's companion, saying so; null when it can't be. */
+    val downloadToServer: (browseId: String?, type: BrowseType, title: String, subtitle: String, songs: List<Song>) -> (() -> Unit)? =
+        { browseId, type, title, subtitle, songs ->
+            if (browseId == null || companionServer == null || type != BrowseType.ALBUM ||
+                browseId.startsWith(ServerLibrary.PREFIX) || browseId.startsWith("local:")
+            ) null else {
+                {
+                    val artist = albumArtistOf(subtitle) ?: songs.firstOrNull()?.artist.orEmpty()
+                    viewModel.downloadToServer(browseId, artist, title)
+                    showQueueNotice(context.getString(R.string.server_download_sent, title))
+                }
+            }
+        }
 
     /**
      * Whether the host has taken the music, and say so if they have.
@@ -2455,9 +2538,12 @@ private fun BitChordApp(
         topDetail?.takeIf { it.type == BrowseType.ARTIST }
             ?.let { AppleArtistArtRepository.cached(it.browseId) }
     }
-    val detailPalette = rememberArtworkPalette(
+    // Same colours the album/playlist page itself uses, so the fades under the bars match it.
+    val detailPalette = rememberPagePalette(
+        page = topDetail,
         imageUrl = detailApple?.heroUrl ?: topDetail?.thumbnailUrl,
-        keyColors = detailApple?.keyColors(),
+        artistKeys = detailApple?.keyColors(),
+        albumInfo = rememberAlbumInfo(topDetail),
     )
 
     // One set of numbers for the cards, the page, the stories and the shared
@@ -3315,6 +3401,7 @@ private fun BitChordApp(
                                 // search button; one fading out keeps its list whole.
                                 searching = detailSearching && page.browseId == detail?.browseId,
                                 onSearchingChange = { detailSearching = it },
+                                query = if (page.browseId == detail?.browseId) detailQuery else "",
                                 onArtistClick = { id, name ->
                                     viewModel.openDetail(id, name, "Artist", null, BrowseType.ARTIST)
                                 },
@@ -3322,7 +3409,14 @@ private fun BitChordApp(
                                 // Saving is an account action, so it isn't offered to a
                                 // guest at all — same as the like and add-to-playlist rows
                                 // in the track menu.
-                                onToggleLibrary = if (signedIn) {
+                                onDownloadToServer = downloadToServer(
+                                    page.browseId, page.type, page.title, page.subtitle,
+                                    (page.songs as? UiState.Success)?.data.orEmpty(),
+                                ),
+                                serverDownload = serverDownloads[page.browseId] ?: rememberInNavidrome(companionServer, page),
+                                onToggleLibrary = if (signedIn || page.browseId.startsWith(ServerLibrary.PREFIX) ||
+                                    page.browseId.startsWith(com.music.bitchord.data.sources.GlazeCompanion.RELEASE_PREFIX)
+                                ) {
                                     { viewModel.toggleLibrary(page.browseId) }
                                 } else {
                                     null
@@ -3330,7 +3424,7 @@ private fun BitChordApp(
                                 // Same rule for the artist page's subscribe circle:
                                 // a channel subscription is the account's, so a
                                 // guest is never shown the button.
-                                onToggleSubscription = if (signedIn) {
+                                onToggleSubscription = if (signedIn || page.browseId.startsWith(ServerLibrary.PREFIX)) {
                                     { viewModel.toggleSubscription(page.browseId) }
                                 } else {
                                     null
@@ -3674,7 +3768,7 @@ private fun BitChordApp(
                                 // does nothing; see [onBrowseLongPress].
                                 onShelfItemLongPress = onBrowseLongPress,
                                 onNewPlaylist = { creatingPlaylist = true },
-                                onImportSpotifyPlaylist = { showSpotifyImportDialog = true },
+                                onImportSpotifyPlaylist = { showImportChooser = true },
                                 onShowAll = { shelf -> navigator.push(AppRoute.LibraryShowAll(shelf)) },
                                 replay = {
                                     LibraryReplayEntry(
@@ -4013,19 +4107,10 @@ private fun BitChordApp(
                             // "…" pair do on Apple Music's album page: the header
                             // below is left with just the sleeve, the title and
                             // Shuffle / Play / Add.
+                            // No search button: pulling down at the top of the list
+                            // reveals a floating search bar (see DetailScreen), as on Glaze.
                             if ((isReleaseDetail || isLocalDetail) && detail != null) {
                                 val releaseSongs = (detail.songs as? UiState.Success)?.data.orEmpty()
-                                if (releaseSongs.isNotEmpty()) {
-                                    IconButton(onClick = { detailSearching = !detailSearching }) {
-                                        Icon(
-                                            if (detailSearching) Icons.Rounded.Close else BitChordIcons.Search,
-                                            contentDescription = stringResource(
-                                                if (detailSearching) R.string.close_search else R.string.search_this_list,
-                                            ),
-                                            tint = MaterialTheme.colorScheme.onSurface,
-                                        )
-                                    }
-                                }
                                 // The menu itself is [FrostedSortMenu], composed
                                 // with the app's other frosted overlays further
                                 // down — in the main hierarchy, where the haze
@@ -4128,6 +4213,27 @@ private fun BitChordApp(
                         }
                     },
                 )
+
+                // The album page's floating search field, in the bar's layer so it
+                // wears the same liquid glass as the back button and actions.
+                val searchPillAlpha by animateFloatAsState(
+                    targetValue = if (detailSearching && isDetailVisible) 1f else 0f,
+                    animationSpec = tween(160),
+                    label = "searchPillAlpha",
+                )
+                if (searchPillAlpha > 0f) {
+                    FloatingSearchPill(
+                        query = detailQuery,
+                        onQueryChange = { detailQuery = it },
+                        onClose = { detailSearching = false },
+                        placeholder = stringResource(R.string.search_this_list),
+                        hazeState = hazeState,
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .padding(top = topBarHeight() + 8.dp)
+                            .graphicsLayer { alpha = searchPillAlpha },
+                    )
+                }
 
                 // Drawn before the bars so their own glass reads on top of it.
                 BottomFadeScrim(
@@ -4236,7 +4342,7 @@ private fun BitChordApp(
                             pull = playerSheetMotion.takeIf { !reducePlayerMotion },
                             modifier = Modifier.fillMaxWidth(),
                         )
-                        Spacer(Modifier.height(8.dp))
+                        Spacer(Modifier.height(14.dp))
                     }
                     FloatingBottomBar(
                         tabs = tabs,
@@ -4443,6 +4549,10 @@ private fun BitChordApp(
                 value = song.localUri == null &&
                     withContext(Dispatchers.IO) { AudioCache.holds(song.videoId) }
             }
+            // Only for a song the server doesn't have yet.
+            val onServer by produceState<Boolean?>(null, song.videoId, companionServer?.id) {
+                value = companionServer?.let { runCatching { ServerLibrary.trackIdOn(it.id, song) }.getOrNull() != null }
+            }
             SongActionsMenu(
                 song = song,
                 signedIn = signedIn,
@@ -4465,6 +4575,23 @@ private fun BitChordApp(
                 // The other direction: a device file going up to the
                 // server. Closed first, unlike a download — progress and
                 // the summary notice live outside the sheet.
+                // Not for a track that already plays from that server.
+                onRequestForServer = companionServer
+                    ?.takeIf { server -> SourceRegistry.parseTrackKey(song.videoId)?.first != server.id && song.localUri == null && onServer == false }
+                    ?.let {
+                        {
+                            songActions = null
+                            viewModel.downloadToServer(
+                                "song:${song.videoId}", song.artist, song.title, kind = "track", album = song.albumName,
+                            )
+                            showQueueNotice(context.getString(R.string.server_download_sent, song.title))
+                        }
+                    },
+                requestForServerLabel = stringResource(
+                    R.string.request_for_server,
+                    companionServer?.serverType?.replaceFirstChar { it.uppercase() }?.ifBlank { null }
+                        ?: stringResource(R.string.server_library),
+                ),
                 onUploadToWebDav =
                     if (com.music.bitchord.data.webdav.WebDavConfig.isConfigured(webdavUrl) &&
                         com.music.bitchord.data.webdav.WebDavUploads.isUploadable(song)
@@ -4507,6 +4634,14 @@ private fun BitChordApp(
                         viewModel.removeFromPlaylist(it.browseId, song)
                     }
                 } ?: detail?.browseId
+                    ?.takeIf { !fromPlayer && com.music.bitchord.data.spotify.LocalPlaylistStore.getPlaylist(it) != null }
+                    ?.let { id ->
+                        {
+                            songActions = null
+                            viewModel.removeFromPlaylist(id, song)
+                        }
+                    }
+                    ?: detail?.browseId
                     ?.takeIf { !fromPlayer && song.localUri != null && OfflinePlaylists.isOfflinePlaylist(it) }
                     ?.let { id ->
                         {
@@ -4917,8 +5052,19 @@ private fun BitChordApp(
                 playlistTarget = null
                 creatingPlaylist = false
             }
+            // Device playlists sit beside the account's, so adding never needs a sign-in.
+            val pickable = remember(playlists, localPlaylists) {
+                localPlaylists.map { local ->
+                    UserPlaylist(
+                        playlistId = local.id,
+                        title = local.title,
+                        subtitle = context.getString(R.string.local_playlist_subtitle, local.songs.size),
+                        thumbnailUrl = local.songs.firstNotNullOfOrNull { it.thumbnailUrl },
+                    )
+                } + playlists
+            }
             PlaylistPickerSheet(
-                playlists = playlists,
+                playlists = pickable,
                 loading = playlistsLoading,
                 song = target,
                 startCreating = target == null,
@@ -5003,6 +5149,21 @@ private fun BitChordApp(
             )
         }
 
+        if (showImportChooser) {
+            BackHandler { showImportChooser = false }
+            ImportPlaylistAlert(
+                hazeState = hazeState,
+                servers = ServerLibrary.servers(),
+                onSpotify = { showImportChooser = false; showSpotifyImportDialog = true },
+                onImported = { title, privacy, songs ->
+                    viewModel.createPlaylistWithVideoIds(title, privacy, songs.map { it.videoId }, songs) { browseId, pTitle, _ ->
+                        showQueueNotice(context.getString(R.string.spotify_import_done, pTitle))
+                        browseId?.let { id -> viewModel.openDetail(id, pTitle, "${songs.size} songs", songs.firstOrNull()?.thumbnailUrl) }
+                    }
+                },
+                onDismiss = { showImportChooser = false },
+            )
+        }
         if (showSpotifyImportDialog) {
             BackHandler { showSpotifyImportDialog = false }
             SpotifyImportAlert(
@@ -5068,6 +5229,9 @@ private fun BitChordApp(
             val playlist = target.browseId
                 ?.takeIf { signedIn && ownedPlaylists[it] == true }
                 ?.let { id -> playlists.firstOrNull { it.browseId == id } }
+                ?: target.browseId?.takeIf { ServerLibrary.isPlaylist(it) }?.let { id ->
+                    UserPlaylist(id, target.title, target.subtitle, target.thumbnailUrl)
+                }
             val remote = target.browseId?.startsWith("local:") == false
             // Spotify playlists saved on this device ("local:playlist:sp_local_…")
             // carry real YouTube video ids, so they download like a remote
@@ -5129,6 +5293,23 @@ private fun BitChordApp(
                 // What the target carries that the tracks don't is the
                 // release's own name and cover, which is exactly what the
                 // record wants.
+                onDownloadToServer = downloadToServer(target.browseId, target.type, target.title, target.subtitle, emptyList())
+                    ?.let { send -> { browseActions = null; send() } },
+                onToggleServerSync = target.browseId
+                    ?.takeIf { id -> companionServer != null && playlistsForSync.any { it.browseId == id } }
+                    ?.let { id -> { AppSettings.toggleServerSyncedPlaylist(id) } },
+                serverSyncOn = target.browseId in syncedPlaylists,
+                serverDownloadStatus = target.browseId?.let { serverDownloads[it] }?.let { job ->
+                    context.getString(
+                        when {
+                            job.finished -> R.string.server_download_done
+                            job.failed -> R.string.server_download_failed
+                            job.status == "searching" -> R.string.server_download_searching
+                            job.status == "downloading" -> R.string.server_download_downloading
+                            else -> R.string.server_download_importing
+                        },
+                    )
+                },
                 onDownloadAll = act { songs ->
                     startDownload(
                         songs,
@@ -5152,7 +5333,7 @@ private fun BitChordApp(
                 // channel link, not a release, and nobody asked for it)
                 // and off anything with no real browse id behind it.
                 onShare = target.browseId
-                    ?.takeIf { remote && (target.type == BrowseType.ALBUM || target.type == BrowseType.PLAYLIST) }
+                    ?.takeIf { remote && !it.startsWith(ServerLibrary.PREFIX) && (target.type == BrowseType.ALBUM || target.type == BrowseType.PLAYLIST) }
                     ?.let { id ->
                         {
                             val url = if (target.type == BrowseType.PLAYLIST) {
@@ -6275,3 +6456,39 @@ private const val TAB_HOME = 0
 private const val TAB_EXPLORE = 1
 private const val TAB_LIBRARY = 2
 private const val TAB_SEARCH = 3
+
+/** The artist in a release's "Album • Travis Scott • 2018" subtitle, if it names one. */
+internal fun albumArtistOf(subtitle: String): String? =
+    subtitle.split("•", "·").map { it.trim() }.firstOrNull { part ->
+        part.isNotEmpty() && !(part.length == 4 && part.all(Char::isDigit)) &&
+            part.lowercase() !in setOf("album", "single", "ep", "playlist")
+    }
+
+/** "in 3 days", "tomorrow", "today", or the date itself for anything past or far off. */
+internal fun readableReleaseDay(isoDate: String): String = runCatching {
+    val date = java.time.LocalDate.parse(isoDate.take(10))
+    val days = java.time.temporal.ChronoUnit.DAYS.between(java.time.LocalDate.now(), date)
+    when {
+        days == 0L -> "today"
+        days == 1L -> "tomorrow"
+        days in 2..13 -> "in $days days"
+        else -> date.format(java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy"))
+    }
+}.getOrDefault(isoDate)
+
+/** A finished "job" for an album Navidrome already has, so its page shows "In your library". */
+@Composable
+private fun rememberInNavidrome(
+    server: com.music.bitchord.data.sources.SourceConfig?,
+    page: com.music.bitchord.data.model.DetailPage,
+): com.music.bitchord.data.sources.GlazeCompanion.Job? {
+    val found by produceState(false, server?.id, page.browseId) {
+        value = server != null && page.type == BrowseType.ALBUM &&
+            !page.browseId.startsWith(ServerLibrary.PREFIX) && !page.browseId.startsWith("local:") &&
+            !page.browseId.startsWith(com.music.bitchord.data.sources.GlazeCompanion.RELEASE_PREFIX) &&
+            runCatching {
+                ServerLibrary.source(server.id)?.findAlbum(page.title, albumArtistOf(page.subtitle).orEmpty()) != null
+            }.getOrDefault(false)
+    }
+    return if (found) com.music.bitchord.data.sources.GlazeCompanion.Job("", "rescanned") else null
+}

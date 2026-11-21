@@ -70,6 +70,16 @@ data class SourceConfig(
      * the manifest is next read.
      */
     val bitchordAuth: Boolean? = null,
+    /** [SourceKind.SUBSONIC] login. Only the salted token is kept — never the password. */
+    val username: String = "",
+    val authToken: String = "",
+    val authSalt: String = "",
+    /** Which server software answered, lowercased (`navidrome`, `jellyfin`, `gonic`…); blank if unknown. */
+    val serverType: String = "",
+    /** The user named this source themselves, so an addon's manifest name doesn't replace it. */
+    val labelSetByUser: Boolean = false,
+    /** A [SourceKind.SUBSONIC] server's Glaze Companion, for downloads into it; blank if none. See [GlazeCompanion]. */
+    val companionUrl: String = "",
 ) {
     /** The entry of [qualityOptions] in force: the pick while the addon still lists it, else its first. */
     val activeQuality: AddonQualityOption?
@@ -405,7 +415,11 @@ object SourceRegistry {
      * and not just the one with a text field.
      */
     private fun SourceConfig.tidied(): SourceConfig =
-        if (kind == SourceKind.ADDON) copy(baseUrl = AddonClient.normalizeBase(baseUrl)) else this
+        when (kind) {
+            SourceKind.ADDON -> copy(baseUrl = AddonClient.normalizeBase(baseUrl))
+            SourceKind.SUBSONIC -> copy(baseUrl = subsonicBase(baseUrl))
+            else -> this
+        }
 
     fun remove(configId: String) {
         val target = config(configId) ?: return
@@ -474,8 +488,12 @@ object SourceRegistry {
         // would be answering a question about the old address with the new one
         // selected.
         previous.values.filterNot { it in instances.values }
-            .filterIsInstance<AddonSource>()
-            .forEach { it.release() }
+            .forEach {
+                when (it) {
+                    is AddonSource -> it.release()
+                    is SubsonicSource -> it.release()
+                }
+            }
         if (persist && ::prefs.isInitialized) {
             prefs.edit()
                 .putString(KEY_SOURCES, json.encodeToString(ListSerializer(SourceConfig.serializer()), next))
@@ -498,7 +516,29 @@ object SourceRegistry {
      * [existing] is carried through so editing a saved source keeps its id and
      * its on/off state; a new source gets a fresh config.
      */
-    suspend fun identify(url: String, existing: SourceConfig? = null): Result<SourceConfig> {
+    suspend fun identify(
+        url: String,
+        existing: SourceConfig? = null,
+        username: String = "",
+        password: String = "",
+    ): Result<SourceConfig> {
+        // A login means a Subsonic server: the address alone can't say so, as its API needs auth.
+        if (username.isNotBlank()) {
+            val keep = existing?.takeIf { it.kind == SourceKind.SUBSONIC && it.username == username.trim() }
+            val (token, salt) = when {
+                password.isNotEmpty() -> SubsonicSource.tokenFor(password)
+                keep != null && keep.authToken.isNotEmpty() -> keep.authToken to keep.authSalt
+                else -> return Result.failure(AddonException("Enter the password"))
+            }
+            val config = (existing ?: SourceConfig(kind = SourceKind.SUBSONIC)).copy(
+                kind = SourceKind.SUBSONIC,
+                baseUrl = subsonicBase(url),
+                username = username.trim(),
+                authToken = token,
+                authSalt = salt,
+            )
+            return Result.success(config.copy(serverType = SubsonicSource(config).detectServerType()))
+        }
         val detected = SourceFormats.identify(url).getOrElse { return Result.failure(it) }
         return when (detected) {
             is DetectedFormat.Addon -> Result.success(
@@ -588,6 +628,7 @@ object SourceRegistry {
         SourceKind.MODULE -> ModuleSource(config)
         SourceKind.JIOSAAVN -> JioSaavnSource(config)
         SourceKind.YOUTUBE -> YouTubeSource(config)
+        SourceKind.SUBSONIC -> SubsonicSource(config)
     }
 
     /**
@@ -632,6 +673,12 @@ object SourceRegistry {
             .toString()
 
     private val BUILT_IN_KINDS = listOf(SourceKind.JIOSAAVN, SourceKind.YOUTUBE)
+
+    /** A Subsonic server's base: no trailing slash and no `/rest`, which [SubsonicSource] adds itself. */
+    internal fun subsonicBase(url: String): String {
+        val trimmed = url.trim().trimEnd('/').removeSuffix("/rest")
+        return if ("://" in trimmed) trimmed else "https://$trimmed"
+    }
 
     private const val KEY_SOURCES = "sources"
     /** One-shot migration: existing users must explicitly opt in again. */

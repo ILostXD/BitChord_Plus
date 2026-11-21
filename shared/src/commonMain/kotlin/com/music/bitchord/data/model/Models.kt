@@ -410,6 +410,8 @@ data class ShelfItem(
      * picture the player can show. Drawn as a 16:9 card, as the web player does.
      */
     val isVideo: Boolean = false,
+    /** A small check over the cover's corner: this is already saved (a Pre-Saved release). */
+    val badge: Boolean = false,
 )
 
 /** How a shelf's items are laid out — the web player's `ShelfLayout`, by the same rules. */
@@ -687,7 +689,8 @@ data class UserPlaylist(
     val subtitle: String,
     val thumbnailUrl: String?,
 ) {
-    val browseId: String get() = "VL$playlistId"
+    // A server playlist's id is already its page id; see ServerLibrary.
+    val browseId: String get() = if (playlistId.startsWith("server:")) playlistId else "VL$playlistId"
 }
 
 /**

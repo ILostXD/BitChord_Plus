@@ -78,7 +78,12 @@ import com.music.bitchord.data.sources.SourceConfig
 import com.music.bitchord.data.sources.SourceHealth
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
-import com.music.bitchord.ui.components.AddonEditorAlert
+import com.music.bitchord.data.sources.SubsonicSource
+import com.music.bitchord.ui.components.EditorField
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import com.music.bitchord.ui.components.ServerEditorAlert
+import androidx.compose.ui.text.input.KeyboardType
 import dev.chrisbanes.haze.HazeState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -169,7 +174,14 @@ fun SourcesScreen(
             // equal and writes nothing, so there is no loop between this and
             // the [configs] it is reading. A rename on the addon's side is
             // picked up the next time this screen is opened.
-            if (source is AddonSource) {
+            // A music server saved before type detection existed learns its type (and icon) here.
+            if (source is SubsonicSource && config.serverType.isEmpty()) {
+                val type = withContext(Dispatchers.IO) { source.detectServerType() }
+                if (type.isNotEmpty()) {
+                    SourceRegistry.config(config.id)?.let { SourceRegistry.update(it.copy(serverType = type)) }
+                }
+            }
+            if (source is AddonSource && !config.labelSetByUser) {
                 val named = withContext(Dispatchers.IO) { runCatching { source.manifestName() }.getOrNull() }
                 if (named != null && named != config.label) {
                     // Off the stored config, not the one this pass started with:
@@ -813,12 +825,20 @@ private fun SourceRow(
         )
         Spacer(Modifier.width(6.dp))
         Icon(
-            imageVector = when (config.kind) {
-                SourceKind.ADDON -> SfIcons.Extension
-                SourceKind.CUSTOM_MODULE -> SfIcons.Extension
-                SourceKind.MODULE -> SfIcons.Extension
-                SourceKind.JIOSAAVN -> SfIcons.GraphicEq // or some other icon
-                SourceKind.YOUTUBE -> SfIcons.PlayCircle
+            // A music server shows its own logo when it said which one it is.
+            painter = when (config.serverType.takeIf { config.kind == SourceKind.SUBSONIC }) {
+                "navidrome" -> painterResource(R.drawable.ic_source_navidrome)
+                "jellyfin" -> painterResource(R.drawable.ic_source_jellyfin)
+                else -> rememberVectorPainter(
+                    when (config.kind) {
+                        SourceKind.ADDON -> SfIcons.Extension
+                        SourceKind.CUSTOM_MODULE -> SfIcons.Extension
+                        SourceKind.MODULE -> SfIcons.Extension
+                        SourceKind.JIOSAAVN -> SfIcons.GraphicEq // or some other icon
+                        SourceKind.YOUTUBE -> SfIcons.PlayCircle
+                        SourceKind.SUBSONIC -> SfIcons.Cloud
+                    },
+                )
             },
             contentDescription = null,
             tint = MaterialTheme.colorScheme.onBackground,
@@ -1047,6 +1067,12 @@ internal fun SourceEditorAlert(
 ) {
     val isNew = SourceRegistry.config(config.id) == null
     var baseUrl by remember { mutableStateOf(config.baseUrl) }
+    // Filled in only for a Navidrome / Subsonic server; blank means an addon.
+    var username by remember { mutableStateOf(config.username) }
+    // Blank keeps the default: the addon's own name, or the server's host.
+    var name by remember { mutableStateOf(config.label.takeIf { config.labelSetByUser }.orEmpty()) }
+    var password by remember { mutableStateOf("") }
+    var companion by remember { mutableStateOf(config.companionUrl) }
     var busy by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf<String?>(null) }
     var statusIsGood by remember { mutableStateOf(false) }
@@ -1068,7 +1094,7 @@ internal fun SourceEditorAlert(
         status = null
         scope.launch {
             val identified = withContext(Dispatchers.IO) {
-                runCatching { SourceRegistry.identify(baseUrl.trim(), config.takeUnless { isNew }) }
+                runCatching { SourceRegistry.identify(baseUrl.trim(), config.takeUnless { isNew }, username, password) }
                     .getOrElse { Result.failure(it) }
             }
             val found = identified.getOrNull()
@@ -1118,32 +1144,75 @@ internal fun SourceEditorAlert(
             // that was true before and is why Test was never mandatory — while
             // a URL nothing can be made of is not.
             if (thenSave) {
-                if (isNew) SourceRegistry.add(found) else SourceRegistry.update(found)
+                val named = (
+                    if (name.isNotBlank()) {
+                        found.copy(label = name.trim(), labelSetByUser = true)
+                    } else if (found.labelSetByUser) {
+                        found.copy(label = if (found.kind == SourceKind.SUBSONIC) "" else found.label, labelSetByUser = false)
+                    } else found
+                    ).let { if (it.kind == SourceKind.SUBSONIC) it.copy(companionUrl = companion.trim()) else it }
+                if (isNew) SourceRegistry.add(named) else SourceRegistry.update(named)
                 onSaved()
             }
         }
     }
 
-    AddonEditorAlert(
+    ServerEditorAlert(
         hazeState = hazeState,
         title = if (isNew) {
             stringResource(R.string.add_addon)
         } else {
             config.displayName
         },
-        description = stringResource(R.string.addon_url_description),
-        urlValue = baseUrl,
-        // A result describes the address it was run against, so the moment that
-        // address is edited it stops being true and is cleared. Left up, it
-        // would report "Connected" over a URL nobody has tried.
-        onUrlChange = { baseUrl = it; status = null },
-        urlPlaceholder = "https://my-addon.example.com",
+        description = stringResource(R.string.addon_url_description) + "\n" +
+            stringResource(R.string.subsonic_login_hint),
+        fields = listOf(
+            EditorField(
+                value = name,
+                onChange = { name = it },
+                placeholder = stringResource(R.string.source_name_optional),
+            ),
+            // A result describes the address it was run against, so the moment that
+            // address is edited it stops being true and is cleared. Left up, it
+            // would report "Connected" over a URL nobody has tried.
+            EditorField(
+                value = baseUrl,
+                onChange = { baseUrl = it; status = null },
+                placeholder = "https://my-addon.example.com",
+                keyboardType = KeyboardType.Uri,
+            ),
+            EditorField(
+                value = username,
+                onChange = { username = it; status = null },
+                placeholder = stringResource(R.string.subsonic_username),
+            ),
+            EditorField(
+                value = password,
+                onChange = { password = it; status = null },
+                placeholder = if (config.authToken.isNotEmpty()) {
+                    stringResource(R.string.subsonic_password_saved)
+                } else {
+                    stringResource(R.string.subsonic_password)
+                },
+                keyboardType = KeyboardType.Password,
+                isPassword = true,
+            ),
+        ) + listOfNotNull(
+            // Only a music server has a companion to download into it.
+            EditorField(
+                value = companion,
+                onChange = { companion = it },
+                placeholder = stringResource(R.string.companion_url_optional),
+                keyboardType = KeyboardType.Uri,
+            ).takeIf { username.isNotBlank() },
+        ),
         status = status,
         statusIsGood = statusIsGood,
         testing = busy,
         canSubmit = baseUrl.isNotBlank(),
         onTest = { run(thenSave = false) },
         onSave = { run(thenSave = true) },
+        removeLabel = stringResource(R.string.remove_source),
         onRemove = if (isNew) null else onDelete,
         onDismiss = onDismiss,
     )

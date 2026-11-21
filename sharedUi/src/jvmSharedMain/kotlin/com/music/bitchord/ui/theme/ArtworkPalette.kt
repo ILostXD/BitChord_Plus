@@ -19,6 +19,7 @@ import coil3.compose.LocalPlatformContext
 import com.music.bitchord.ui.graphics.ColorUtils
 import com.music.bitchord.ui.graphics.forPixelAccess
 import com.music.bitchord.ui.graphics.paletteSwatches
+import com.music.bitchord.ui.graphics.Swatch
 import com.music.bitchord.ui.graphics.toImageBitmap
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.SingletonImageLoader
@@ -102,6 +103,8 @@ fun rememberArtworkPalette(
      */
     artPx: Int = CARD_ART_PX,
     keyColors: ArtworkKeyColors? = null,
+    /** Album/playlist pages: one tint and plain white/black ink, as Apple Music and Glaze draw them. */
+    collection: Boolean = false,
 ): ArtworkPalette {
     val scheme = MaterialTheme.colorScheme
     val reduceAnimation by PlayerPlatform.host.settings.reduceAnimation.collectAsStateWithLifecycle()
@@ -114,7 +117,7 @@ fun rememberArtworkPalette(
     // front of a surface that could already be right.
     val knownUpFront = remember(imageUrl) { decoded != null }
 
-    val target = seed?.toPalette(dark) ?: ArtworkPalette(
+    val target = (if (collection) seed?.toCollectionPalette(dark) else seed?.toPalette(dark)) ?: ArtworkPalette(
         background = scheme.background,
         wash = scheme.background,
         elevated = scheme.surfaceVariant,
@@ -199,6 +202,16 @@ private const val TINT_FADE_MS = 260
  */
 private data class Seed(
     val dominant: Color,
+    /** Every swatch averaged by how much of the artwork it covers: the cover's overall colour. */
+    val average: Color = dominant,
+    /**
+     * The average of the cover's most populated hue family, or null when the
+     * cover is mostly black, white or grey. Averaging every hue together mixes
+     * a blue sky and a gold statue into brown; one family keeps the colour.
+     */
+    val family: Color? = null,
+    /** A colour the source supplied (Apple's `bgColor`): used as the page exactly as given. */
+    val exact: Boolean = false,
     val vibrant: Color,
     val edge: Color,
     val topBandLuminance: Float,
@@ -227,8 +240,12 @@ private fun seedOf(bitmap: ImageBitmap): Seed? {
         val hsl = FloatArray(3).also { ColorUtils.colorToHSL(swatch.rgb, it) }
         hsl[1] * sqrt(swatch.population.toFloat())
     }
+    val total = all.sumOf { it.population.toLong() }.coerceAtLeast(1L).toFloat()
+    fun channel(shift: Int) = all.sumOf { ((it.rgb shr shift) and 0xFF) * it.population.toLong() } / total / 255f
     return Seed(
         dominant = Color(dominant.rgb),
+        average = Color(channel(16), channel(8), channel(0)),
+        family = hueFamily(all),
         vibrant = Color(vibrant.rgb),
         edge = bitmap.bottomEdgeColor(),
         topBandLuminance = bitmap.topBandRelativeLuminance(),
@@ -241,6 +258,11 @@ private fun seedOf(bitmap: ImageBitmap): Seed? {
  */
 private fun ArtworkKeyColors.toSeed() = Seed(
     dominant = background,
+    exact = true,
+    // A coloured key colour is the page's hue as given (Apple's bgColor); a grey one stays neutral.
+    family = background.takeIf {
+        FloatArray(3).also { hsl -> ColorUtils.colorToHSL(background.toArgb(), hsl) }[1] >= 0.12f
+    },
     vibrant = accent,
     edge = background,
     topBandLuminance = relativeLuminance(background.toArgb()),
@@ -322,6 +344,67 @@ internal fun topBandScrimAlpha(artworkLuminance: Float?): Float {
 
 private const val PLAYER_STATUS_SCRIM_MIN_ALPHA = 0.16f
 private const val PLAYER_STATUS_SCRIM_MAX_ALPHA = 0.65f
+
+/**
+ * Glaze's collection backdrop: the artwork's colour mixed into a near-black (or
+ * near-white) base without boosting its saturation, so a dark sleeve gives a
+ * dark page instead of a coloured one, and ink that is just white (or black).
+ */
+private fun Seed.toCollectionPalette(dark: Boolean): ArtworkPalette {
+    // Apple's own colour for the cover. Used as given when it already suits the
+    // theme; otherwise Apple Music keeps its hue and pulls it dark (or light), so a
+    // cream sleeve reads as a dark warm grey in dark mode rather than a bright page.
+    if (exact) {
+        val fits = if (dark) dominant.luminance() <= MAX_DARK_PAGE_LUMINANCE else dominant.luminance() >= MIN_LIGHT_PAGE_LUMINANCE
+        val page = if (fits) dominant else dominant.withHsl(
+            saturation = { it * THEMED_SATURATION_SCALE },
+            lightness = { if (dark) 0.16f else 0.92f },
+        )
+        return collectionPaletteOf(page, dark)
+    }
+    // A colourful cover takes its main hue family, darkened but keeping its
+    // saturation, as Apple Music does (Astroworld reads blue, not brown).
+    family?.let { hue -> return collectionPaletteOf(vividBase(hue, dark), dark) }
+    // A mostly neutral cover: Glaze's mix of its overall colour into near-black.
+    val sampled = average
+    val brightest = maxOf(sampled.red, sampled.green, sampled.blue)
+    val darkest = minOf(sampled.red, sampled.green, sampled.blue)
+    val nearBlack = brightest < 0.08f || (brightest < 0.16f && brightest - darkest < 0.035f)
+    val tinted = when {
+        dark && nearBlack -> Color(0xFF080808)
+        dark -> mix(Color(0xFF101416), sampled, 0.70f)
+        else -> mix(Color(0xFFF9F9F9), sampled, 0.18f)
+    }
+    // Keep bright covers colourful without turning a dark page pale under white type.
+    val darkness = if (dark) (0.35f / maxOf(tinted.red, tinted.green, tinted.blue)).coerceAtMost(1f) else 1f
+    val base = Color(tinted.red * darkness, tinted.green * darkness, tinted.blue * darkness)
+    return collectionPaletteOf(base, dark)
+}
+
+/** A hue family's colour as a page: dark (or light) enough for plain ink, saturation kept. */
+private fun vividBase(hue: Color, dark: Boolean): Color = hue.withHsl(
+    saturation = { it.coerceIn(0.25f, 0.62f) },
+    lightness = { if (dark) 0.17f else 0.90f },
+)
+
+private fun collectionPaletteOf(base: Color, dark: Boolean): ArtworkPalette {
+    val ink = if (dark) Color.White else Color.Black
+    return ArtworkPalette(
+        background = base,
+        wash = base,
+        elevated = mix(base, ink, 0.10f),
+        accent = ink,
+        onBackground = ink,
+        onBackgroundVariant = ink.copy(alpha = if (dark) 0.65f else 0.60f),
+        divider = ink.copy(alpha = 0.13f),
+    )
+}
+
+private fun mix(from: Color, to: Color, amount: Float) = Color(
+    red = from.red + (to.red - from.red) * amount,
+    green = from.green + (to.green - from.green) * amount,
+    blue = from.blue + (to.blue - from.blue) * amount,
+)
 
 private fun Seed.toPalette(dark: Boolean): ArtworkPalette = if (dark) {
     ArtworkPalette(
@@ -420,3 +503,41 @@ private fun Color.withHsl(
 
 /** Perceived brightness, used only to tell a dark theme from a light one. */
 private fun Color.luminance(): Float = ColorUtils.calculateLuminance(toArgb()).toFloat()
+
+
+/**
+ * The pop-weighted average of the hue family (30° bins) carrying the most
+ * coloured area, or null when coloured pixels cover under a quarter of the
+ * cover: then it is a black, white or grey record and should look like one.
+ */
+internal fun hueFamily(swatches: List<Swatch>): Color? {
+    val total = swatches.sumOf { it.population.toLong() }.toFloat().takeIf { it > 0f } ?: return null
+    val hsl = FloatArray(3)
+    val bins = HashMap<Int, MutableList<Swatch>>()
+    for (swatch in swatches) {
+        ColorUtils.colorToHSL(swatch.rgb, hsl)
+        // Too grey, too dark or too pale to carry a hue.
+        if (hsl[1] < 0.18f || hsl[2] < 0.10f || hsl[2] > 0.92f) continue
+        bins.getOrPut((hsl[0] / 30f).toInt() % 12) { mutableListOf() }.add(swatch)
+    }
+    val best = bins.values.maxByOrNull { bin ->
+        bin.sumOf { swatch ->
+            ColorUtils.colorToHSL(swatch.rgb, hsl)
+            (swatch.population * hsl[1]).toDouble()
+        }
+    } ?: return null
+    val population = best.sumOf { it.population.toLong() }.toFloat()
+    if (population / total < MIN_FAMILY_SHARE) return null
+    fun channel(shift: Int) = best.sumOf { ((it.rgb shr shift) and 0xFF) * it.population.toLong() } / population / 255f
+    return Color(channel(16), channel(8), channel(0))
+}
+
+/** How much of a cover one hue family must cover before the page takes its colour. */
+private const val MIN_FAMILY_SHARE = 0.25f
+
+/** The lightest Apple colour used unchanged in dark mode; white text still reads on it. */
+private const val MAX_DARK_PAGE_LUMINANCE = 0.2f
+/** The darkest Apple colour used unchanged in light mode. */
+private const val MIN_LIGHT_PAGE_LUMINANCE = 0.45f
+/** How much of a re-lit colour's saturation survives (Apple's cream turns to a muted warm grey). */
+private const val THEMED_SATURATION_SCALE = 0.4f

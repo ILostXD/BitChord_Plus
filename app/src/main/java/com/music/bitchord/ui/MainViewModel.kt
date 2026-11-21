@@ -49,6 +49,7 @@ import com.music.bitchord.data.model.Account
 import com.music.bitchord.data.model.AccountChannel
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.DetailPage
+import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.withoutRepeatsOf
 import com.music.bitchord.data.model.LibraryPage
@@ -98,6 +99,7 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import com.music.bitchord.data.sources.AddonSource
 import com.music.bitchord.data.sources.SourceKind
+import com.music.bitchord.data.sources.ServerLibrary
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.TrackMatcher
@@ -699,6 +701,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * registered, and people tap again.
      */
     fun setLike(videoId: String, status: LikeStatus) {
+        SourceRegistry.parseTrackKey(videoId)?.let { (configId, trackId) ->
+            val server = ServerLibrary.source(configId) ?: return@let
+            val previous = likeStatusOf(videoId)
+            if (previous == status) return
+            LikeState.set(videoId, status)
+            viewModelScope.launch {
+                runCatching { server.setStarred("id", trackId, status == LikeStatus.LIKE) }
+                    .onFailure { LikeState.set(videoId, previous) }
+            }
+            return
+        }
         if (!requireSignIn()) return
         val previous = likeStatusOf(videoId)
         if (previous == status) return
@@ -812,6 +825,27 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * control on it to have been tapped, so this is a no-op rather than a guess.
      */
     fun toggleLibrary(browseId: String) {
+        if (browseId.startsWith(com.music.bitchord.data.sources.GlazeCompanion.RELEASE_PREFIX)) {
+            val current = _detailStack.value.firstOrNull { it.browseId == browseId }?.library ?: return
+            val server = com.music.bitchord.data.sources.GlazeCompanion.server() ?: return
+            setSavedOnPage(browseId, !current.saved)
+            viewModelScope.launch {
+                val id = browseId.removePrefix(com.music.bitchord.data.sources.GlazeCompanion.RELEASE_PREFIX)
+                runCatching { com.music.bitchord.data.sources.GlazeCompanion.setPreSaved(server, id, !current.saved) }
+                    .onSuccess { it?.let(com.music.bitchord.data.sources.GlazeCompanion::updated) }
+                    .onFailure { setSavedOnPage(browseId, current.saved) }
+            }
+            return
+        }
+        ServerLibrary.parse(browseId)?.let { ref ->
+            val current = _detailStack.value.firstOrNull { it.browseId == browseId }?.library ?: return
+            setSavedOnPage(browseId, !current.saved)
+            viewModelScope.launch {
+                runCatching { ServerLibrary.source(ref.configId)!!.setStarred("albumId", ref.id, !current.saved) }
+                    .onFailure { setSavedOnPage(browseId, current.saved) }
+            }
+            return
+        }
         if (!requireSignIn()) return
         val current = _detailStack.value.firstOrNull { it.browseId == browseId }?.library ?: return
         val target = !current.saved
@@ -834,6 +868,28 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * never offered a subscribe button — a signed-out response among them.
      */
     fun toggleSubscription(browseId: String) {
+        ServerLibrary.parse(browseId)?.let { ref ->
+            val current = _detailStack.value.firstOrNull { it.browseId == browseId }?.subscription ?: return
+            fun set(starred: Boolean) {
+                _detailStack.value = _detailStack.value.map {
+                    if (it.browseId == browseId) it.copy(subscription = current.copy(subscribed = starred)) else it
+                }
+            }
+            set(!current.subscribed)
+            viewModelScope.launch {
+                runCatching { ServerLibrary.source(ref.configId)!!.setStarred("artistId", ref.id, !current.subscribed) }
+                    .onFailure { set(current.subscribed) }
+                    // The companion looks up a newly starred artist's releases in the
+                    // background; ask again once it has had a moment, for the Home shelf.
+                    .onSuccess {
+                        repeat(2) {
+                            delay(8_000)
+                            com.music.bitchord.data.sources.GlazeCompanion.refreshUpcoming()
+                        }
+                    }
+            }
+            return
+        }
         if (!requireSignIn()) return
         val current = _detailStack.value
             .firstOrNull { it.browseId == browseId }?.subscription ?: return
@@ -1011,18 +1067,48 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         song: Song,
         onResult: (added: Int, alreadyThere: Int, failed: Int) -> Unit = { _, _, _ -> },
     ) {
-        if (!requireSignIn() || playlists.isEmpty()) return
+        if (playlists.isEmpty()) return
+        val (server, others) = playlists.partition { ServerLibrary.isPlaylist(it.playlistId) }
+        // Playlists kept on this device need no account.
+        val (local, remote) = others.partition {
+            com.music.bitchord.data.spotify.LocalPlaylistStore.getPlaylist(it.playlistId) != null
+        }
+        if (remote.isNotEmpty() && !requireSignIn()) return
         viewModelScope.launch {
-            val outcomes = playlists.map { addOne(it, song) }
+            val outcomes: List<AddOutcome> = local.map {
+                if (com.music.bitchord.data.spotify.LocalPlaylistStore.addSong(it.playlistId, song)) {
+                    appendToOpenPlaylist("local:playlist:${it.playlistId}", song, null)
+                    AddOutcome.ADDED
+                } else AddOutcome.ALREADY_THERE
+            }
+            val synced = AppSettings.serverSyncedPlaylists.value
+            val remoteOutcomes = remote.map { addOne(it, song) }
+            val allOutcomes = outcomes + remoteOutcomes + server.map { addToServerPlaylist(it, song) }
+            // Only a YouTube Music playlist asks the server for the song.
+            if (remote.zip(remoteOutcomes).any { (playlist, outcome) -> outcome == AddOutcome.ADDED && playlist.browseId in synced }) autoDownloadToServer(song)
             onResult(
-                outcomes.count { it == AddOutcome.ADDED },
-                outcomes.count { it == AddOutcome.ALREADY_THERE },
-                outcomes.count { it == AddOutcome.FAILED },
+                allOutcomes.count { it == AddOutcome.ADDED },
+                allOutcomes.count { it == AddOutcome.ALREADY_THERE },
+                allOutcomes.count { it == AddOutcome.FAILED },
             )
         }
     }
 
     private enum class AddOutcome { ADDED, ALREADY_THERE, FAILED }
+
+    /** Adds [song] to a server playlist: its own track, or the server's copy of it (FAILED when it has none). */
+    private suspend fun addToServerPlaylist(playlist: UserPlaylist, song: Song): AddOutcome {
+        val ref = ServerLibrary.parse(playlist.playlistId) ?: return AddOutcome.FAILED
+        val server = ServerLibrary.source(ref.configId) ?: return AddOutcome.FAILED
+        return runCatching {
+            val trackId = ServerLibrary.trackIdOn(ref.configId, song)
+                ?: return if (autoDownloadToServer(song) { addToServerPlaylist(playlist, song) }) AddOutcome.ADDED else AddOutcome.FAILED
+            if (trackId in server.playlist(ref.id).songIds) return AddOutcome.ALREADY_THERE
+            server.addToPlaylist(ref.id, listOf(trackId))
+            if (_detailStack.value.any { it.browseId == playlist.browseId }) loadServerPage(playlist.browseId)
+            AddOutcome.ADDED
+        }.getOrDefault(AddOutcome.FAILED)
+    }
 
     private suspend fun addOne(playlist: UserPlaylist, song: Song): AddOutcome {
         val openSongs = (_detailStack.value.firstOrNull { it.browseId == playlist.browseId }
@@ -1049,8 +1135,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * playlist the user has to add to again.
      */
     fun createPlaylist(title: String, privacy: PlaylistPrivacy, song: Song? = null) {
-        if (!requireSignIn()) return
         val name = title.trim().ifBlank { text(R.string.new_playlist) }
+        // Signed out: the playlist lives on this device instead of asking for an account.
+        if (!requireSignIn()) {
+            com.music.bitchord.data.spotify.LocalPlaylistStore.savePlaylist(name, listOfNotNull(song))
+            return
+        }
         viewModelScope.launch {
             YtMusicRepository.createPlaylist(
                 title = name,
@@ -1161,6 +1251,28 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * row out from under the reader rather than waiting for a re-fetch.
      */
     fun removeFromPlaylist(browseId: String, song: Song) {
+        ServerLibrary.parse(browseId)?.takeIf { it.kind == ServerLibrary.Kind.PLAYLIST }?.let { ref ->
+            val songs = (_detailStack.value.firstOrNull { it.browseId == browseId }?.songs as? UiState.Success)?.data ?: return
+            val index = songs.indexOfFirst { it.videoId == song.videoId }.takeIf { it >= 0 } ?: return
+            _detailStack.value = _detailStack.value.map { page ->
+                if (page.browseId != browseId) page
+                else page.copy(songs = UiState.Success(songs.filterIndexed { i, _ -> i != index }))
+            }
+            viewModelScope.launch {
+                runCatching { ServerLibrary.source(ref.configId)!!.removeFromPlaylist(ref.id, index) }
+                    .onFailure { loadServerPage(browseId) }
+            }
+            return
+        }
+        if (com.music.bitchord.data.spotify.LocalPlaylistStore.getPlaylist(browseId) != null) {
+            com.music.bitchord.data.spotify.LocalPlaylistStore.removeSong(browseId, song)
+            _detailStack.value = _detailStack.value.map { page ->
+                val songs = (page.songs as? UiState.Success)?.data
+                if (page.browseId != browseId || songs == null) page
+                else page.copy(songs = UiState.Success(songs.filterNot { it.videoId == song.videoId }))
+            }
+            return
+        }
         val setVideoId = song.setVideoId ?: return
         if (!requireSignIn()) return
         val playlistId = browseId.removePrefix("VL")
@@ -1273,6 +1385,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * showing the old name.
      */
     fun renamePlaylist(playlist: UserPlaylist, title: String) {
+        ServerLibrary.parse(playlist.browseId)?.let { ref ->
+            val name = title.trim().takeIf { it.isNotBlank() && it != playlist.title } ?: return
+            viewModelScope.launch {
+                if (runCatching { ServerLibrary.source(ref.configId)!!.renamePlaylist(ref.id, name) }.isSuccess) {
+                    retitleDetail(playlist.browseId, name)
+                    ServerLibrary.refreshPlaylists()
+                }
+            }
+            return
+        }
         if (!requireSignIn()) return
         val name = title.trim()
         if (name.isBlank() || name == playlist.title) return
@@ -1292,6 +1414,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * see [YtMusicRepository.playlistEntries] for why not the open page's list.
      */
     fun loadPlaylistEntries(playlist: UserPlaylist, onResult: (Result<List<Song>>) -> Unit) {
+        ServerLibrary.parse(playlist.browseId)?.let { ref ->
+            viewModelScope.launch {
+                onResult(runCatching { ServerLibrary.source(ref.configId)!!.playlist(ref.id).songs })
+            }
+            return
+        }
         if (!requireSignIn()) return onResult(Result.failure(IllegalStateException("signed out")))
         viewModelScope.launch {
             onResult(YtMusicRepository.playlistEntries(playlist.browseId))
@@ -1310,6 +1438,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         reordered: List<Song>,
         onResult: (Boolean) -> Unit = {},
     ) {
+        ServerLibrary.parse(playlist.browseId)?.let { ref ->
+            viewModelScope.launch {
+                val ids = reordered.mapNotNull { SourceRegistry.parseTrackKey(it.videoId)?.second }
+                val saved = ids.size == reordered.size && runCatching {
+                    ServerLibrary.source(ref.configId)!!.replacePlaylist(ref.id, ids)
+                }.isSuccess
+                if (saved) {
+                    _detailStack.value = _detailStack.value.map { page ->
+                        if (page.browseId != playlist.browseId) page else page.copy(songs = UiState.Success(reordered))
+                    }
+                }
+                onResult(saved)
+            }
+            return
+        }
         if (!requireSignIn()) return onResult(false)
         viewModelScope.launch {
             YtMusicRepository.reorderPlaylist(
@@ -1333,7 +1476,240 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Downloads into the music server asked for from this app, by the page they were asked from. */
+    private val _serverDownloads = MutableStateFlow<Map<String, com.music.bitchord.data.sources.GlazeCompanion.Job>>(emptyMap())
+    val serverDownloads: StateFlow<Map<String, com.music.bitchord.data.sources.GlazeCompanion.Job>> = _serverDownloads.asStateFlow()
+
+    /**
+     * Has the companion download [title] by [artist] into the music server (a failed
+     * one is retried), then follows the job until it is in the library or has failed.
+     */
+    fun downloadToServer(
+        key: String,
+        artist: String,
+        title: String,
+        kind: String = "album",
+        album: String? = null,
+        durationSec: Int = 0,
+        onFinished: suspend () -> Unit = {},
+    ) {
+        val server = com.music.bitchord.data.sources.GlazeCompanion.server() ?: return
+        val previous = _serverDownloads.value[key]
+        if (previous?.active == true) return
+        // Marked at once, so a second ask for the same thing in this tick doesn't submit twice.
+        _serverDownloads.value += key to com.music.bitchord.data.sources.GlazeCompanion.Job("", "searching")
+        viewModelScope.launch {
+            var job = runCatching {
+                if (previous?.failed == true && previous.id.isNotEmpty()) {
+                    com.music.bitchord.data.sources.GlazeCompanion.retry(server, previous.id)
+                } else {
+                    com.music.bitchord.data.sources.GlazeCompanion.submit(server, artist, title, kind, album, durationSec)
+                }
+            }.getOrElse { com.music.bitchord.data.sources.GlazeCompanion.Job("", "failed", it.message) }
+            _serverDownloads.value += key to job
+            while (job.active) {
+                delay(SERVER_DOWNLOAD_POLL_MS)
+                job = runCatching { com.music.bitchord.data.sources.GlazeCompanion.job(server, job.id) }.getOrElse { job }
+                _serverDownloads.value += key to job
+            }
+            if (job.finished) runCatching { onFinished() }
+        }
+    }
+
+    private val requestLog by lazy { getApplication<Application>().getSharedPreferences("server_requests", android.content.Context.MODE_PRIVATE) }
+
+    private fun recentlyRequested(key: String): Boolean =
+        System.currentTimeMillis() - requestLog.getLong(key.lowercase(), 0L) < REQUEST_MEMORY_MS
+
+    private fun markRequested(key: String) {
+        val now = System.currentTimeMillis()
+        requestLog.edit().apply {
+            // Forget what is long past, so the file doesn't grow for ever.
+            requestLog.all.forEach { (k, v) -> if (v is Long && now - v > REQUEST_MEMORY_MS) remove(k) }
+            putLong(key.lowercase(), now)
+        }.apply()
+    }
+
+    private var serverSyncJob: kotlinx.coroutines.Job? = null
+    private var lastServerSync = 0L
+
+    /** Requests the companion has paused to ask whether to download anyway: see [GlazeCompanion.Job.review]. */
+    private val _pendingReviews = MutableStateFlow<List<com.music.bitchord.data.sources.GlazeCompanion.JobInfo>>(emptyList())
+    val pendingReviews: StateFlow<List<com.music.bitchord.data.sources.GlazeCompanion.JobInfo>> = _pendingReviews.asStateFlow()
+
+    private val notifiedReviews = HashSet<String>()
+    private val answeredReviews = HashSet<String>()
+
+    private fun reviewKey(info: com.music.bitchord.data.sources.GlazeCompanion.JobInfo) =
+        "${info.artist}|${info.title}|${info.kind}".lowercase()
+
+    init {
+        // While the app is alive: look for requests waiting on an answer, and say so once each.
+        viewModelScope.launch {
+            while (true) {
+                val server = com.music.bitchord.data.sources.GlazeCompanion.server()
+                if (server != null) {
+                    runCatching { com.music.bitchord.data.sources.GlazeCompanion.jobs(server) }.onSuccess { jobs ->
+                        // One prompt per request, however many records the companion holds for it,
+                        // and none for one just answered.
+                        val waiting = jobs.filter { it.job.review }
+                            .distinctBy { reviewKey(it) }
+                            .filterNot { reviewKey(it) in answeredReviews }
+                        _pendingReviews.value = waiting
+                        waiting.filter { notifiedReviews.add(it.job.id) }.forEach { notifyReview(it) }
+                    }
+                }
+                delay(REVIEW_POLL_MS)
+            }
+        }
+    }
+
+    private fun notifyReview(info: com.music.bitchord.data.sources.GlazeCompanion.JobInfo) {
+        runCatching {
+            val app = getApplication<Application>()
+            val manager = app.getSystemService(android.app.NotificationManager::class.java) ?: return
+            if (!manager.areNotificationsEnabled()) return
+            manager.createNotificationChannel(
+                android.app.NotificationChannel("server_review", app.getString(R.string.review_channel_name), android.app.NotificationManager.IMPORTANCE_DEFAULT),
+            )
+            val open = android.app.PendingIntent.getActivity(
+                app, 0, app.packageManager.getLaunchIntentForPackage(app.packageName),
+                android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+            manager.notify(
+                info.job.id.hashCode(),
+                androidx.core.app.NotificationCompat.Builder(app, "server_review")
+                    .setSmallIcon(R.drawable.ic_notification_logo)
+                    .setContentTitle(app.getString(R.string.review_notification_title, info.title))
+                    .setContentText(info.job.summary ?: info.artist)
+                    .setStyle(androidx.core.app.NotificationCompat.BigTextStyle().bigText(info.job.summary ?: info.artist))
+                    .setContentIntent(open)
+                    .setAutoCancel(true)
+                    .build(),
+            )
+        }
+    }
+
+    /** Answers a paused request: download it anyway, or keep what the library has. */
+    fun answerReview(info: com.music.bitchord.data.sources.GlazeCompanion.JobInfo, download: Boolean) {
+        answeredReviews += reviewKey(info)
+        _pendingReviews.value = _pendingReviews.value.filterNot { reviewKey(it) == reviewKey(info) }
+        val server = com.music.bitchord.data.sources.GlazeCompanion.server() ?: return
+        viewModelScope.launch {
+            runCatching { com.music.bitchord.data.sources.GlazeCompanion.decide(server, info.job.id, download) }
+        }
+    }
+
+    /**
+     * Settings → "Download playlist additions to server", applied to whole playlists:
+     * each of the account's playlists and the device's own is mirrored to a server
+     * playlist of the same name, holding every song the server already has, in order;
+     * every song it lacks (or its album) goes to the companion, and joins the server
+     * playlist on a later pass, once it has arrived. Idempotent — the companion folds
+     * a repeat request into the job it already has — so it simply runs again on each
+     * app start and whenever the setting changes ([force]).
+     */
+    fun syncPlaylistsToServer(force: Boolean = false) {
+        val mode = AppSettings.serverAutoDownload.value
+        val synced = AppSettings.serverSyncedPlaylists.value
+        val companion = com.music.bitchord.data.sources.GlazeCompanion.server()
+        if (synced.isEmpty() || companion == null) return
+        // One pass at a time: a forced one (a changed setting) waits for the next start
+        // rather than restarting this one and asking for everything over again.
+        if (serverSyncJob?.isActive == true) return
+        if (!force && System.currentTimeMillis() - lastServerSync < SERVER_SYNC_INTERVAL_MS) return
+        lastServerSync = System.currentTimeMillis()
+        val server = ServerLibrary.source(companion.id) ?: return
+        serverSyncJob = viewModelScope.launch {
+            // (title, YouTube browse id to read, or the device playlist's own songs)
+            // Only the YouTube Music playlists switched on in their own menu.
+            val playlists: List<Triple<String, String?, List<Song>>> =
+                _playlists.value.filter { it.browseId in synced }
+                    .map { Triple(it.title, it.browseId, emptyList<Song>()) }
+            val existing = runCatching { server.playlists() }.getOrNull() ?: return@launch
+            val requested = HashSet<String>()
+            var asked = 0
+            for ((title, browseId, own) in playlists) {
+                val songs = (if (browseId == null) own else YtMusicRepository.allSongs(browseId).getOrDefault(emptyList()))
+                    .filter { SourceRegistry.parseTrackKey(it.videoId)?.first != companion.id }
+                if (songs.isEmpty()) continue
+                val ids = mutableListOf<String>()
+                for (song in songs) {
+                    val id = runCatching { ServerLibrary.trackIdOn(companion.id, song) }.getOrNull()
+                    if (id != null) { ids += id; continue }
+                    // Missing: one request per song, or per album, however many playlists share it.
+                    val album = song.albumName?.takeIf { it.isNotBlank() }
+                    val byAlbum = mode == com.music.bitchord.data.settings.ServerAutoDownload.ALBUM && album != null
+                    val key = if (byAlbum) "album:${song.artist}:$album" else "song:${song.artist}:${song.title}"
+                    if (!requested.add(key.lowercase())) continue
+                    // Remembered across starts: a request the companion has seen in the last
+                    // few days is not sent again, whatever came of it. At most a few dozen
+                    // new ones per pass, and none once the companion says its queue is full.
+                    if (recentlyRequested(key) || asked >= MAX_REQUESTS_PER_SYNC) continue
+                    val sent = runCatching {
+                        if (byAlbum) {
+                            com.music.bitchord.data.sources.GlazeCompanion.submit(companion, song.artist, album!!)
+                        } else {
+                            com.music.bitchord.data.sources.GlazeCompanion.submit(
+                                companion, song.artist, song.title, "track", album, (song.durationMillis() / 1000).toInt(),
+                            )
+                        }
+                    }
+                    if (sent.isFailure && sent.exceptionOrNull()?.message == "queue_full") break
+                    if (sent.isSuccess) { markRequested(key); asked++ }
+                }
+                if (ids.isEmpty()) continue
+                runCatching {
+                    val mirror = existing.firstOrNull { it.title == title }?.id
+                    if (mirror == null) server.createPlaylist(title, ids) else server.replacePlaylist(mirror, ids)
+                }
+            }
+            ServerLibrary.refreshPlaylists()
+        }
+    }
+
+    /**
+     * Settings → Music server → "Download songs added to playlists": pulls [song], or
+     * its whole album, into the server — unless it already plays from there or the
+     * server already has it. [onFinished] runs once it is in the library.
+     */
+    private suspend fun autoDownloadToServer(song: Song, onFinished: suspend () -> Unit = {}): Boolean {
+        val mode = AppSettings.serverAutoDownload.value
+        val server = com.music.bitchord.data.sources.GlazeCompanion.server() ?: return false
+        if (SourceRegistry.parseTrackKey(song.videoId)?.first?.let(ServerLibrary::source) != null) return false
+        if (runCatching { ServerLibrary.trackIdOn(server.id, song) }.getOrNull() != null) return false
+        val album = song.albumName?.takeIf { it.isNotBlank() }
+        if (mode == com.music.bitchord.data.settings.ServerAutoDownload.ALBUM && album != null) {
+            downloadToServer("album:${song.artist}:$album", song.artist, album, onFinished = onFinished)
+        } else {
+            downloadToServer(
+                "song:${song.videoId}", song.artist, song.title, kind = "track", album = album,
+                durationSec = (song.durationMillis() / 1000).toInt(), onFinished = onFinished,
+            )
+        }
+        return true
+    }
+
+    /** Creates an empty playlist on server [configId]; [onDone] gets its page id, or null if refused. */
+    fun createServerPlaylist(configId: String, name: String, onDone: (String?) -> Unit) {
+        viewModelScope.launch {
+            val id = runCatching { ServerLibrary.source(configId)!!.createPlaylist(name.trim(), emptyList()) }.getOrNull()
+            ServerLibrary.refreshPlaylists()
+            onDone(id?.let { ServerLibrary.pageId(configId, ServerLibrary.Kind.PLAYLIST, it) })
+        }
+    }
+
     fun deletePlaylist(playlist: UserPlaylist) {
+        ServerLibrary.parse(playlist.browseId)?.let { ref ->
+            viewModelScope.launch {
+                if (runCatching { ServerLibrary.source(ref.configId)!!.deletePlaylist(ref.id) }.isSuccess) {
+                    _detailStack.value = _detailStack.value.filterNot { it.browseId == playlist.browseId }
+                    navigator.onDetailStackShrunk(_detailStack.value.size)
+                    ServerLibrary.refreshPlaylists()
+                }
+            }
+            return
+        }
         if (!requireSignIn()) return
         viewModelScope.launch {
             YtMusicRepository.deletePlaylist(playlist.playlistId).fold(
@@ -1377,6 +1753,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * changes its mind about what a playlist is depending on where it is held.
      */
     fun editablePlaylist(browseId: String?): UserPlaylist? {
+        if (ServerLibrary.isPlaylist(browseId)) {
+            val page = _detailStack.value.firstOrNull { it.browseId == browseId }
+            return UserPlaylist(browseId!!, page?.title.orEmpty(), page?.subtitle.orEmpty(), page?.thumbnailUrl)
+        }
         if (browseId == null || _playlistOwned.value[browseId] != true) return null
         return _playlists.value.firstOrNull { it.browseId == browseId }
     }
@@ -2717,6 +3097,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             openSpotifyPage(browseId, title, subtitle, thumbnailUrl)
             return
         }
+        if (browseId.startsWith(com.music.bitchord.data.sources.GlazeCompanion.RELEASE_PREFIX)) {
+            openReleasePage(browseId, title, subtitle, thumbnailUrl)
+            return
+        }
+        ServerLibrary.parse(browseId)?.let { ref ->
+            _detailStack.value += DetailPage(
+                browseId = browseId,
+                title = title,
+                subtitle = subtitle,
+                thumbnailUrl = thumbnailUrl,
+                songs = UiState.Loading,
+                type = when (ref.kind) {
+                    ServerLibrary.Kind.ALBUM -> BrowseType.ALBUM
+                    ServerLibrary.Kind.ARTIST -> BrowseType.ARTIST
+                    ServerLibrary.Kind.PLAYLIST -> BrowseType.PLAYLIST
+                },
+            )
+            viewModelScope.launch { loadServerPage(browseId) }
+            return
+        }
         val resolved = browseTypeOf(browseId, type)
         _detailStack.value += DetailPage(
             browseId = browseId,
@@ -2889,6 +3289,100 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * then arrive in order and swap the rows in place, so the page is usable
      * before the last song has been found.
      */
+    /**
+     * An upcoming album, as an album page: its announced tracks (not playable yet),
+     * and the header's plus as Pre-Save. The countdown is drawn by the page itself.
+     */
+    private fun openReleasePage(browseId: String, title: String, subtitle: String, thumbnailUrl: String?) {
+        _detailStack.value += DetailPage(browseId, title, subtitle, thumbnailUrl, UiState.Loading, BrowseType.ALBUM)
+        viewModelScope.launch {
+            val id = browseId.removePrefix(com.music.bitchord.data.sources.GlazeCompanion.RELEASE_PREFIX)
+            val release = com.music.bitchord.data.sources.GlazeCompanion.server()?.let { server ->
+                runCatching { com.music.bitchord.data.sources.GlazeCompanion.release(server, id) }.getOrNull()
+            }
+            _detailStack.value = _detailStack.value.map { page ->
+                if (page.browseId != browseId) page
+                else if (release == null) page.copy(songs = UiState.Error(text(R.string.failed)))
+                else page.copy(
+                    title = release.title,
+                    subtitle = release.artist,
+                    thumbnailUrl = release.cover ?: page.thumbnailUrl,
+                    // Not on any service yet: rows that a tap skips, as a Spotify page's unfound ones.
+                    songs = UiState.Success(
+                        release.tracks.map { track ->
+                            Song(
+                                videoId = com.music.bitchord.data.model.SPOTIFY_MISSING_PREFIX + "release-" + track.id,
+                                title = track.title,
+                                artist = track.artist,
+                                albumName = release.title,
+                                thumbnailUrl = release.cover,
+                                durationText = track.durationSec?.let { "%d:%02d".format(it / 60, it % 60) },
+                            )
+                        },
+                    ),
+                    library = LibraryState(browseId, release.saved),
+                )
+            }
+        }
+    }
+
+    /**
+     * Fills (or refreshes) the open server page [browseId] from the server. Its
+     * stars become the tracks' hearts, so a like here is the server's favourite.
+     */
+    private suspend fun loadServerPage(browseId: String) {
+        val ref = ServerLibrary.parse(browseId) ?: return
+        val result = runCatching {
+            val server = ServerLibrary.source(ref.configId) ?: error(text(R.string.server_library_missing))
+            when (ref.kind) {
+                ServerLibrary.Kind.ALBUM -> server.album(ref.id)
+                ServerLibrary.Kind.ARTIST -> server.artist(ref.id)
+                ServerLibrary.Kind.PLAYLIST -> server.playlist(ref.id)
+            }
+        }
+        result.getOrNull()?.let { listing ->
+            listing.songs.forEach {
+                LikeState.set(it.videoId, if (it.videoId in listing.starredSongs) LikeStatus.LIKE else LikeStatus.INDIFFERENT)
+            }
+        }
+        _detailStack.value = _detailStack.value.map { page ->
+            if (page.browseId != browseId) return@map page
+            result.fold(
+                onSuccess = { listing ->
+                    val entry = listing.entry
+                    page.copy(
+                        title = entry.title,
+                        // "Artist • 2018" is what an album page's header reads its credit and year from.
+                        subtitle = listOfNotNull(entry.subtitle.ifBlank { null }, entry.year?.toString()).joinToString(" • "),
+                        thumbnailUrl = entry.coverUrl ?: page.thumbnailUrl,
+                        songs = UiState.Success(listing.songs),
+                        sections = if (ref.kind == ServerLibrary.Kind.ARTIST && listing.albums.isNotEmpty()) {
+                            listOf(
+                                HomeShelf(
+                                    title = text(R.string.albums),
+                                    items = listing.albums.map { album ->
+                                        ShelfItem(
+                                            title = album.title,
+                                            subtitle = album.year?.toString().orEmpty(),
+                                            thumbnailUrl = album.coverUrl,
+                                            videoId = null,
+                                            browseId = ServerLibrary.pageId(ref.configId, ServerLibrary.Kind.ALBUM, album.id),
+                                        )
+                                    },
+                                ),
+                            )
+                        } else page.sections,
+                        // The header's plus is the server's star for an album; an artist's
+                        // follow button stars them (which is what Pre-Save watches).
+                        library = if (ref.kind == ServerLibrary.Kind.ALBUM) LibraryState(browseId, entry.starred) else null,
+                        subscription = if (ref.kind == ServerLibrary.Kind.ARTIST) SubscriptionState(browseId, entry.starred) else null,
+                    )
+                },
+                onFailure = { page.copy(songs = UiState.Error(it.message ?: text(R.string.failed))) },
+            )
+        }
+    }
+
     private fun openSpotifyPage(browseId: String, title: String, subtitle: String, thumbnailUrl: String?) {
         _detailStack.value += DetailPage(
             browseId = browseId,
@@ -3637,3 +4131,12 @@ internal fun lyricsLookupKey(
     order: List<LyricsSource>,
     prioritizeSyllableSync: Boolean,
 ): List<Any> = listOf(videoId, sources, order, prioritizeSyllableSync)
+
+/** How often a companion download is checked on while it runs. */
+private const val SERVER_DOWNLOAD_POLL_MS = 5_000L
+
+/** How long after one playlist-to-server pass the next is left alone (unless the setting changes). */
+private const val SERVER_SYNC_INTERVAL_MS = 30 * 60_000L
+private const val REQUEST_MEMORY_MS = 3 * 24 * 60 * 60_000L
+private const val MAX_REQUESTS_PER_SYNC = 25
+private const val REVIEW_POLL_MS = 60_000L

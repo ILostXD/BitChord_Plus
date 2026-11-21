@@ -89,6 +89,25 @@ object LocalPlaylistStore {
         persist(updated)
     }
 
+    /** Appends [song] unless it is already there; returns whether it was added. */
+    fun addSong(id: String, song: Song): Boolean {
+        val playlist = getPlaylist(id) ?: return false
+        if (playlist.songs.any { it.videoId == song.videoId }) return false
+        val updated = _playlists.value.map { if (it.id == playlist.id) it.copy(songs = it.songs + song) else it }
+        _playlists.value = updated
+        persist(updated)
+        return true
+    }
+
+    fun removeSong(id: String, song: Song) {
+        val playlist = getPlaylist(id) ?: return
+        val updated = _playlists.value.map {
+            if (it.id == playlist.id) it.copy(songs = it.songs.filterNot { s -> s.videoId == song.videoId }) else it
+        }
+        _playlists.value = updated
+        persist(updated)
+    }
+
     fun getPlaylist(id: String): LocalPlaylist? {
         val cleanId = id.removePrefix("local:playlist:").removePrefix("VL")
         return _playlists.value.firstOrNull { it.id == cleanId || it.id == id || it.browseId == id }

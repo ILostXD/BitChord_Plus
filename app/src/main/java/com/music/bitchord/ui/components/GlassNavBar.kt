@@ -40,6 +40,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
@@ -61,6 +62,10 @@ import com.music.bitchord.ui.components.floatingtabbar.FloatingTabBar
 import com.music.bitchord.ui.components.floatingtabbar.FloatingTabBarDefaults
 import com.music.bitchord.ui.components.floatingtabbar.FloatingTabBarScrollConnection
 import com.music.bitchord.ui.haptics.Haptic
+import com.music.bitchord.data.settings.AppSettings
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.unit.sp
 import com.music.bitchord.ui.haptics.rememberHaptics
 import com.music.bitchord.playback.MusicOnlyPlayback
 import com.music.bitchord.ui.player.PlayerDock
@@ -125,23 +130,42 @@ fun GlassNavBar(
     // Held through a state that is always current instead, which also keeps the
     // handler out of the key.
     val currentOnTabSelected by rememberUpdatedState(onTabSelected)
+    val navSize by AppSettings.navBarSize.collectAsStateWithLifecycle()
+    val searchInBar by AppSettings.searchInNavBar.collectAsStateWithLifecycle()
+    // Glaze's heights with labels — 65 / 75 / 85dp — out of the pill inset, glyph and label.
+    val tabPadding = when (navSize) {
+        com.music.bitchord.data.settings.BarSize.SMALL -> 7.dp
+        com.music.bitchord.data.settings.BarSize.MEDIUM -> 12.dp
+        com.music.bitchord.data.settings.BarSize.LARGE -> 17.dp
+    }
+
+    val inlinePadding = when (navSize) {
+        com.music.bitchord.data.settings.BarSize.SMALL -> 8.dp
+        com.music.bitchord.data.settings.BarSize.MEDIUM -> 10.dp
+        com.music.bitchord.data.settings.BarSize.LARGE -> 13.dp
+    }
 
     // Search is the odd one out in the iOS 26 layout: a circle of its own beside
     // the pill rather than a quarter of it. It is the last tab in BitChord's
     // order, which is where the shape wants it anyway.
-    val standaloneIndex = tabs.lastIndex
+    // Settings can put it back in the pill as a tab like the rest, as Glaze can.
+    val standaloneIndex = if (searchInBar) -1 else tabs.lastIndex
 
     // A factory, not a value — see the note in FloatingTabBar's header. Each of
     // the three surfaces gets its own glass modifier and so its own shape cache.
     // The theme's own glass tint, as the liquid top bar has it — no white wash.
     val glassSurface: @Composable () -> Modifier = { Modifier.liquidGlass(shape = pillShape) }
 
+    val miniSizeKey by AppSettings.miniPlayerSize.collectAsStateWithLifecycle()
+    // A size change rebuilds the bar outright: left to recompose in place, its shared-element
+    // bounds and clips kept the old size until the next collapse.
+    key(navSize, searchInBar, miniSizeKey) {
     FloatingTabBar(
         selectedTabKey = selectedIndex,
         scrollConnection = scrollConnection,
         modifier = modifier
             .windowInsetsPadding(floatingBarInsets)
-            .padding(horizontal = NAV_BAR_GUTTER)
+            .padding(horizontal = GLAZE_BAR_GUTTER)
             .padding(bottom = NAV_BAR_LIFT)
             .fillMaxWidth(),
         tabBarContentModifier = glassSurface,
@@ -210,21 +234,25 @@ fun GlassNavBar(
         // inset the ripple.
         sizes = FloatingTabBarDefaults.sizes(
             tabBarContentPadding = PaddingValues(PILL_INSET),
-            tabExpandedContentPadding = PaddingValues(vertical = TAB_VERTICAL_PADDING),
+            tabExpandedContentPadding = PaddingValues(vertical = tabPadding),
+            // The collapsed circles follow the size too: 44 / 48 / 54dp around the glyph.
+            tabInlineContentPadding = PaddingValues(inlinePadding),
+            // Glaze's 14dp between the mini player and the bar.
+            componentSpacing = 14.dp,
             // Collapsed, Apple's row is narrower and more spaced: 48pt circles
             // 28pt in from the screen's sides, 14pt apart, centred on the line
             // the expanded bar's middle runs along.
             inlineComponentSpacing = INLINE_SPACING,
             inlineBarPadding = PaddingValues(
-                start = INLINE_GUTTER - NAV_BAR_GUTTER,
-                end = INLINE_GUTTER - NAV_BAR_GUTTER,
+                start = INLINE_GUTTER - GLAZE_BAR_GUTTER,
+                end = INLINE_GUTTER - GLAZE_BAR_GUTTER,
                 bottom = INLINE_LIFT,
             ),
         ),
         // Held too: this is declared `Any?`, so a fresh list every pass is a
         // changed argument by identity and defeats skipping on its own.
-        contentKey = remember(selectedIndex, tabs, contentColor) {
-            listOf(selectedIndex, tabs, contentColor)
+        contentKey = remember(selectedIndex, tabs, contentColor, navSize, searchInBar) {
+            listOf(selectedIndex, tabs, contentColor, navSize, searchInBar)
         },
     ) {
         tabs.forEachIndexed { index, tab ->
@@ -248,6 +276,21 @@ fun GlassNavBar(
                     onClick = onClick,
                 )
             } else {
+                // In the pill when expanded, still a circle at the end once collapsed.
+                if (searchInBar && index == tabs.lastIndex) {
+                    inlineStandaloneTab(
+                        key = index,
+                        icon = {
+                            Icon(
+                                imageVector = tab.icon,
+                                contentDescription = tab.label,
+                                tint = tint,
+                                modifier = Modifier.size(TAB_ICON_SIZE),
+                            )
+                        },
+                        onClick = onClick,
+                    )
+                }
                 tab(
                     key = index,
                     icon = {
@@ -275,6 +318,7 @@ fun GlassNavBar(
                 )
             }
         }
+    }
     }
 }
 
@@ -329,6 +373,16 @@ private fun GlassNowPlaying(
     )
     val glyphSlot = if (isInline) 32.dp else 40.dp
     val glyphSize = if (isInline) 24.dp else EXPANDED_GLYPH_SIZE
+    // Expanded, Glaze's mini player heights: 52 / 62 / 78dp, the cover growing with it.
+    val miniSize by AppSettings.miniPlayerSize.collectAsStateWithLifecycle()
+    val expandedHeight = when (miniSize) {
+        com.music.bitchord.data.settings.BarSize.SMALL -> 52.dp
+        com.music.bitchord.data.settings.BarSize.MEDIUM -> 62.dp
+        com.music.bitchord.data.settings.BarSize.LARGE -> 78.dp
+    }
+    val artSize = if (isInline) ACCESSORY_ART_SIZE else expandedHeight - 18.dp
+    val artCorner = if (isInline) ACCESSORY_ART_CORNER else artSize * 0.2f
+    val large = !isInline && miniSize == com.music.bitchord.data.settings.BarSize.LARGE
 
     Box(
         // Inline, the accessory is stretched to the row's height by the tab bar
@@ -373,31 +427,30 @@ private fun GlassNowPlaying(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
+                .then(if (isInline) Modifier else Modifier.height(expandedHeight))
                 .padding(
                     // The artwork sits in the end of a capsule, which curves
                     // away from it; at 8dp its corner met the curve.
                     start = 16.dp,
-                    end = if (isInline) 8.dp else 12.dp,
-                    // Expanded, the 40dp play button and these come to the 48dp
-                    // Apple's accessory is.
-                    top = 4.dp,
-                    bottom = 4.dp,
+                    end = if (isInline) 8.dp else 14.dp,
+                    top = if (isInline) 4.dp else 0.dp,
+                    bottom = if (isInline) 4.dp else 0.dp,
                 ),
         ) {
             // A music video plays in the cover's place at its own 16:9, as in
             // the floating mini player; the full player takes it over when up.
             val showsPicture = song.isVideo && MusicOnlyPlayback.showsPicture(song.videoId)
             val artWidth by animateDpAsState(
-                targetValue = if (showsPicture && !VideoThumbnails.square) ACCESSORY_ART_SIZE * (16f / 9f) else ACCESSORY_ART_SIZE,
+                targetValue = if (showsPicture && !VideoThumbnails.square) artSize * (16f / 9f) else artSize,
                 label = "glassMiniArtWidth",
             )
             Box(
                 modifier = Modifier
-                    .size(width = artWidth, height = ACCESSORY_ART_SIZE)
+                    .size(width = artWidth, height = artSize)
                     // Whichever of the two densities is on screen is the one
                     // the player flies to: only one is composed at rest.
-                    .playerDockArt(dock, ACCESSORY_ART_CORNER)
-                    .clip(RoundedCornerShape(ACCESSORY_ART_CORNER))
+                    .playerDockArt(dock, artCorner)
+                    .clip(RoundedCornerShape(artCorner))
                     .background(MaterialTheme.colorScheme.surfaceVariant),
             ) {
                 AsyncImage(
@@ -416,7 +469,7 @@ private fun GlassNowPlaying(
                     )
                 }
             }
-            Spacer(Modifier.width(if (isInline) 8.dp else 9.dp))
+            Spacer(Modifier.width(if (isInline) 8.dp else if (large) 12.dp else 10.dp))
             // Title and artist at both densities, as Apple Music has them, in its
             // small, openly spaced type (see [ACCESSORY_TITLE_SIZE]). The inline
             // row shares its width with the tab pill and the Search circle, so
@@ -425,14 +478,14 @@ private fun GlassNowPlaying(
                 val secondary = contentColor.copy(alpha = 0.7f)
                 ExplicitSongTitle(
                     song = song,
-                    style = titleStyle,
+                    style = if (large) titleStyle.copy(fontSize = 16.sp) else titleStyle,
                     color = contentColor,
                     badgeColor = secondary,
                     fadeOverflow = true,
                 )
                 FadingLine(
                     text = song.artist,
-                    style = artistStyle,
+                    style = if (large) artistStyle.copy(fontSize = 14.sp) else artistStyle,
                     color = secondary,
                 )
             }
@@ -482,6 +535,9 @@ private fun GlassNowPlaying(
         }
     }
 }
+
+/** Glaze's margin at either side of the screen, for the bar and the mini player above it. */
+private val GLAZE_BAR_GUTTER = 17.dp
 
 /** The collapsed row's margin at either side of the screen, and its items' spacing. */
 private val INLINE_GUTTER = 28.dp

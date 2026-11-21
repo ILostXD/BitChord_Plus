@@ -156,9 +156,88 @@ object AppleMusicCanvas {
                 title = name,
                 artist = attributes["artistName"]?.jsonPrimitive?.contentOrNull,
                 album = name,
+                // The album page's full-screen header takes the 3:4 rendition, like the player.
+                portraitUrl = tallUrl(video),
             )
         }
         return null
+    }
+
+    /** What an album page shows beside its title, as Apple's catalogue states it. */
+    data class AlbumInfo(
+        val genre: String?,
+        /** ISO `yyyy-MM-dd`, or a bare year for some older releases. */
+        val releaseDate: String?,
+        val lossless: Boolean,
+        val hiRes: Boolean,
+        /** Apple's background colour for the cover art (`artwork.bgColor`), as RGB. */
+        val bgColor: Int? = null,
+        /** The label it was released on, e.g. "Cactus Jack / Epic". */
+        val recordLabel: String? = null,
+        /** Each track's (name, disc number), in Apple's order; read only for multi-disc albums. */
+        val trackDiscs: List<Pair<String, Int>> = emptyList(),
+    )
+
+    private val albumInfoCache = java.util.concurrent.ConcurrentHashMap<String, java.util.Optional<AlbumInfo>>()
+
+    /**
+     * Genre, release date and audio traits for an album — the same scored search
+     * as [searchAlbum], but for any album, not only those with motion artwork.
+     * Null when no confident match.
+     */
+    fun albumInfo(album: String, artist: String): AlbumInfo? {
+        val key = "${album.lowercase(Locale.ROOT)}|${artist.lowercase(Locale.ROOT)}"
+        albumInfoCache[key]?.let { return it.orElse(null) }
+        val bearer = token() ?: return null
+        val term = if (album.contains(artist, ignoreCase = true)) album else "$artist $album"
+        val url = "$AMP/$storefront/search".toHttpUrl().newBuilder()
+            .addQueryParameter("term", term)
+            .addQueryParameter("types", "albums")
+            .addQueryParameter("limit", "10")
+            .build()
+            .toString()
+        val body = get(url, bearer) ?: return null
+        val hits = runCatching {
+            json.parseToJsonElement(body).jsonObject["results"]?.jsonObject
+                ?.get("albums")?.jsonObject?.get("data")?.jsonArray
+        }.getOrNull() ?: return null
+        val best = hits.mapNotNull { hit ->
+            val record = hit as? JsonObject ?: return@mapNotNull null
+            val score = score(record, album, artist, album, albumIsSelf = true) ?: return@mapNotNull null
+            (score to record).takeIf { score >= MIN_SCORE }
+        }.maxByOrNull { it.first }?.second
+        val info = best?.get("attributes")?.jsonObject?.let { attributes ->
+            val traits = runCatching {
+                attributes["audioTraits"]?.jsonArray?.map { it.jsonPrimitive.content }
+            }.getOrNull().orEmpty()
+            AlbumInfo(
+                // "Music" is Apple's catch-all parent genre, never the useful one.
+                genre = runCatching { attributes["genreNames"]?.jsonArray?.map { it.jsonPrimitive.content } }
+                    .getOrNull()?.firstOrNull { it != "Music" },
+                releaseDate = attributes["releaseDate"]?.jsonPrimitive?.contentOrNull,
+                lossless = "lossless" in traits || "hi-res-lossless" in traits,
+                hiRes = "hi-res-lossless" in traits,
+                bgColor = attributes["artwork"]?.jsonObject?.get("bgColor")?.jsonPrimitive?.contentOrNull
+                    ?.takeIf { it.length == 6 }?.toIntOrNull(16),
+                recordLabel = attributes["recordLabel"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() },
+                trackDiscs = best["id"]?.jsonPrimitive?.contentOrNull?.let { id -> trackDiscs(id, bearer) }.orEmpty(),
+            )
+        }
+        albumInfoCache[key] = java.util.Optional.ofNullable(info)
+        return info
+    }
+
+    /** An album's tracks as (name, disc number); empty when it is a single disc or unreadable. */
+    private fun trackDiscs(albumId: String, bearer: String): List<Pair<String, Int>> {
+        val body = get("$AMP/$storefront/albums/$albumId/tracks?limit=300", bearer) ?: return emptyList()
+        val tracks = runCatching {
+            json.parseToJsonElement(body).jsonObject["data"]?.jsonArray?.mapNotNull { track ->
+                val attributes = (track as? JsonObject)?.get("attributes")?.jsonObject ?: return@mapNotNull null
+                val name = attributes["name"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+                name to (attributes["discNumber"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: 1)
+            }
+        }.getOrNull().orEmpty()
+        return tracks.takeIf { list -> list.any { it.second > 1 } }.orEmpty()
     }
 
     // ---- Search scoring ------------------------------------------------

@@ -202,7 +202,6 @@ private fun ChannelRow(channel: AccountChannel, selected: Boolean, onClick: () -
                 modifier = Modifier
                     .size(30.dp)
                     .clip(CircleShape)
-                    .thumbnailBorder(CircleShape)
                     .background(MaterialTheme.colorScheme.surfaceVariant),
             )
         } else {

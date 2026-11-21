@@ -88,6 +88,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.CompositingStrategy
@@ -95,6 +96,14 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.draw.drawBehind
+import com.music.bitchord.data.sources.ServerLibrary
+import androidx.compose.material.icons.rounded.CloudDownload
+import androidx.compose.material.icons.rounded.HourglassTop
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.SolidColor
@@ -150,6 +159,26 @@ import com.music.bitchord.data.model.CARD_ART_PX
 import com.music.bitchord.data.model.HEADER_ART_PX
 import com.music.bitchord.data.model.ROW_ART_PX
 import com.music.bitchord.data.model.HomeShelf
+import com.music.bitchord.data.YtMusicRepository
+import com.music.bitchord.data.canvas.AppleMusicCanvas
+import com.music.bitchord.data.sources.SourceRegistry
+import com.music.bitchord.data.settings.CollectionBackground
+import com.music.bitchord.ui.player.FullArtworkBlurBackdrop
+import com.music.bitchord.ui.player.rememberFullArtworkBlurImage
+import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withContext
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.res.painterResource
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.settings.SongSort
 import com.music.bitchord.data.model.Song
@@ -164,6 +193,7 @@ import com.music.bitchord.ui.components.ExplicitSongTitle
 import com.music.bitchord.ui.components.LIBRARY_GRID_SPACING
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
+import com.music.bitchord.ui.components.BAR_GUTTER
 import com.music.bitchord.ui.components.NUMBERED_ROW_DIVIDER_INSET
 import com.music.bitchord.ui.components.RowMoreButton
 import com.music.bitchord.ui.components.ROW_DIVIDER_INSET
@@ -172,7 +202,6 @@ import com.music.bitchord.ui.components.SongRow
 import com.music.bitchord.ui.components.SearchPlayingBars
 import com.music.bitchord.ui.components.libraryGrid
 import com.music.bitchord.ui.components.lightweightLiquidGlass
-import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.components.detailSkeleton
 import com.music.bitchord.ui.components.topBarContentPadding
 import com.music.bitchord.ui.components.trackColumnWidth
@@ -184,6 +213,7 @@ import com.music.bitchord.ui.graphics.smootherStep
 import com.music.bitchord.ui.player.CanvasArtworkPlayer
 import com.music.bitchord.ui.theme.ArtworkPalette
 import com.music.bitchord.ui.theme.rememberArtworkPalette
+import com.music.bitchord.ui.theme.ArtworkKeyColors
 import kotlin.math.roundToInt
 import java.util.Locale
 
@@ -211,6 +241,9 @@ private val SLEEVE_SHADOW = 18.dp
  */
 private const val FULL_BLEED_MAX_HEIGHT = 0.62f
 
+/** Apple's tall motion cover is 3:4 (width / height). */
+private const val TALL_COVER_ASPECT = 3f / 4f
+
 /** How much of a full-bleed sleeve's foot dissolves into the page — the player's banner's share. */
 private const val FULL_BLEED_FADE_FRACTION = 0.42f
 
@@ -218,8 +251,17 @@ private const val FULL_BLEED_FADE_FRACTION = 0.42f
 private val FULL_BLEED_TITLE_OVERLAP = 44.dp
 
 /** Shuffle and Add to Library either side of the release page's Play pill. */
-private val RELEASE_SIDE_BUTTON = 50.dp
-private val RELEASE_ACTION_GAP = 14.dp
+private val RELEASE_SIDE_BUTTON = 48.dp
+private val RELEASE_ACTION_GAP = 16.dp
+
+/** Play's fixed width, so the three controls sit as a compact centred group (Glaze / Apple Music). */
+private val RELEASE_PLAY_WIDTH = 160.dp
+
+/** A 3:4 header reports this much of its width as height, so the title rides up into its fade. */
+private const val TALL_HEADER_LAYOUT_RATIO = 1.02f
+
+/** Space between an album's footer text and the hairlines above and below it. */
+private val ALBUM_FOOTER_GAP = 20.dp
 
 /** Past this the Play pill stops growing, so a tablet doesn't get a bar. */
 private val RELEASE_ACTIONS_MAX_WIDTH = 420.dp
@@ -326,6 +368,8 @@ fun DetailScreen(
      * and overflow buttons, not on this page.
      */
     searching: Boolean = false,
+    /** The find-in-list text; its field floats in the top bar (MainActivity). */
+    query: String = "",
     onSearchingChange: (Boolean) -> Unit = {},
     /**
      * Saves this release to the account's library, or takes it out —
@@ -335,6 +379,9 @@ fun DetailScreen(
      * wouldn't just be refused.
      */
     onToggleLibrary: (() -> Unit)? = null,
+    /** Downloads this album into the music server through its companion; null without one. */
+    onDownloadToServer: (() -> Unit)? = null,
+    serverDownload: com.music.bitchord.data.sources.GlazeCompanion.Job? = null,
     /**
      * Subscribes to this artist's channel, or unsubscribes —
      * [DetailPage.subscription] says which way round. The artist page's answer
@@ -433,10 +480,23 @@ fun DetailScreen(
             if (signature != null) return@LaunchedEffect
         }
     }
-    val palette = rememberArtworkPalette(
-        imageUrl = appleArt?.heroUrl ?: page.thumbnailUrl,
-        keyColors = appleArt?.keyColors(),
-    )
+    // Genre, full release date, lossless and Apple's cover colour (shared with the bars).
+    val albumInfo = rememberAlbumInfo(page)
+    // Glaze: a multi-disc album is split into "Disc 1", "Disc 2"…, numbered from 1 on each.
+    val discs = remember(rawSongs, albumInfo) {
+        if (page.type == BrowseType.ALBUM) discNumbers(rawSongs, albumInfo?.trackDiscs.orEmpty()) else emptyMap()
+    }
+    val discTrackNumbers = remember(rawSongs, discs) {
+        if (discs.isEmpty()) emptyMap() else {
+            val seen = HashMap<Int, Int>()
+            rawSongs.associate { song ->
+                val disc = discs[song.videoId] ?: 1
+                song.videoId to seen.merge(disc, 1, Int::plus)!!
+            }
+        }
+    }
+    val pageBackground by AppSettings.collectionBackground.collectAsStateWithLifecycle()
+    val palette = rememberPagePalette(page, appleArt?.heroUrl ?: page.thumbnailUrl, appleArt?.keyColors(), albumInfo)
 
     // Narrowing the running order in place — the release equivalent of the
     // filter box on the Local Music tab, and the one thing a long track list
@@ -444,12 +504,6 @@ fun DetailScreen(
     // the text itself is the page's, and goes when the box does: a filter left
     // on an album that was closed and reopened would be a page that appears to
     // have lost most of its tracks.
-    var query by rememberSaveable(page.browseId) { mutableStateOf("") }
-    // Whether the field still owes the keyboard an appearance. Held here rather
-    // than in the field, which is a row in a lazy list: scrolled out of sight it
-    // is disposed, and a field that asks for focus every time it is composed
-    // would throw the keyboard back up each time it scrolled into view.
-    var focusSearch by remember(page.browseId) { mutableStateOf(false) }
     val closeSearch = { onSearchingChange(false) }
     // Back closes the search first — this handler is registered after the one
     // that pops the page, so it is the one that answers while it's enabled.
@@ -463,6 +517,15 @@ fun DetailScreen(
     // list. When no filter is active, matches contains the full running order
     // and plays the complete release/playlist from the tapped position.
     val queue = remember(matches) { matches.map { it.value } }
+    // Spotify / Glaze: songs like a playlist's own, from radios of a few of its
+    // tracks, when YouTube offers no suggestions of its own (playlists you don't own).
+    var playlistRecs by remember(page.browseId) { mutableStateOf(emptyList<Song>()) }
+    LaunchedEffect(page.browseId, songs.isNotEmpty()) {
+        if (page.type != BrowseType.PLAYLIST || page.browseId.startsWith("local:") ||
+            page.suggestedSongs.isNotEmpty() || songs.isEmpty() || playlistRecs.isNotEmpty()
+        ) return@LaunchedEffect
+        playlistRecs = runCatching { playlistRecommendations(songs) }.getOrDefault(emptyList())
+    }
     val suggested = remember(page.suggestedSongs, query) {
         page.suggestedSongs.matching(query).map { it.value }
     }
@@ -489,6 +552,7 @@ fun DetailScreen(
     // photograph, and neither is something a label publishes a canvas for.
     val canvasEnabled by AppSettings.animatedCanvas.collectAsStateWithLifecycle()
     val fullBleedArtwork by AppSettings.fullBleedDetailArtwork.collectAsStateWithLifecycle()
+    val autoDetailArtwork by AppSettings.autoDetailArtworkLayout.collectAsStateWithLifecycle()
     val prioritizeSpotifyCanvas by AppSettings.prioritizeSpotifyCanvas.collectAsStateWithLifecycle()
     // The credit line the header shows is the artist as far as the catalogue
     // services are concerned. A browse card's subtitle sometimes omits it, in
@@ -505,7 +569,9 @@ fun DetailScreen(
         // As on the player: the credit fills in once the tracks load, so this
         // can run twice. Keep a clip that is already playing if the second
         // pass comes back empty.
-        canvas = CanvasRepository.canvasForAlbum(page.title, credit) ?: canvas
+        canvas = CanvasRepository.canvasForAlbum(page.title, credit)
+            ?: primaryArtist(credit)?.let { CanvasRepository.canvasForAlbum(page.title, it) }
+            ?: canvas
     }
     // An artist's clip comes with the same Apple lookup as its photograph.
     val artistVideo = appleArt?.videoUrl
@@ -513,18 +579,61 @@ fun DetailScreen(
         if (isArtist) canvas = artistVideo?.takeIf { canvasEnabled }?.let { CanvasArtwork(url = it) }
     }
 
+    // Only promised when something configured can actually serve it lossless.
+    val losslessSource = remember { SourceRegistry.active().any { it.kind.canServeLossless } }
+    // "More from <artist>" and "Similar albums", built from the artist's YouTube Music page.
+    var recommendations by remember(page.browseId) { mutableStateOf(emptyList<HomeShelf>()) }
+    val albumArtistId = songs.firstNotNullOfOrNull { it.artistId }
+    val moreFromTitle = stringResource(R.string.more_from_artist, credit)
+    val similarTitle = stringResource(R.string.similar_albums)
+    LaunchedEffect(page.browseId, albumArtistId) {
+        if (page.type != BrowseType.ALBUM || albumArtistId == null) return@LaunchedEffect
+        // YouTube Music answers these artist pages unreliably under load, so a
+        // miss is retried a couple of times before the page goes without.
+        for (wait in listOf(0L, 2_000L, 6_000L)) {
+            if (wait > 0) delay(wait)
+            val found = runCatching {
+                albumRecommendations(page.browseId, albumArtistId, moreFromTitle, similarTitle)
+            }.getOrDefault(emptyList())
+            if (found.isNotEmpty()) {
+                recommendations = found
+                break
+            }
+        }
+    }
+
     // Opening the search carries the page up to it, so the field lands just
     // clear of the frosted bar with the tracks under it rather than at the foot
     // of a screen still filled with artwork. Done as an effect rather than in
     // the tap, so the row it scrolls to is already in the list by the time it
     // runs.
-    val searchStop = with(LocalDensity.current) { topBarContentPadding().roundToPx() }
-    LaunchedEffect(searching) {
-        if (searching) {
-            focusSearch = true
-            listState.animateScrollToItem(SEARCH_ITEM_INDEX, -searchStop)
-        } else {
-            query = ""
+    // Glaze's gesture: pulling down at the top of the list reveals the floating
+    // search bar; scrolling the list away again hides it while it is empty.
+    val canSearch = !isArtist && songs.isNotEmpty()
+    val openSearch by rememberUpdatedState({ if (canSearch) onSearchingChange(true) })
+    val hideSearch by rememberUpdatedState({ if (query.isBlank()) onSearchingChange(false) })
+    val pullDistance = with(LocalDensity.current) { 48.dp.toPx() }
+    val hideDistance = with(LocalDensity.current) { 24.dp.toPx() }
+    val searchGesture = remember(listState, pullDistance, hideDistance) {
+        object : NestedScrollConnection {
+            var pull = 0f
+            var away = 0f
+            override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+                if (source != NestedScrollSource.UserInput) return Offset.Zero
+                if (!listState.canScrollBackward && available.y > 0f) {
+                    pull += available.y
+                    away = 0f
+                    if (pull >= pullDistance) { openSearch(); pull = 0f }
+                } else if (consumed.y < 0f) {
+                    away -= consumed.y
+                    pull = 0f
+                    if (away >= hideDistance) { hideSearch(); away = 0f }
+                } else {
+                    pull = 0f
+                    away = 0f
+                }
+                return Offset.Zero
+            }
         }
     }
 
@@ -553,7 +662,38 @@ fun DetailScreen(
                 // the narrow one it was written for.
                 val artHeight = (maxWidth / ARTIST_PHOTO_RATIO).coerceAtMost(maxHeight * 0.6f)
                 val sleeveSize = (maxWidth * SLEEVE_FRACTION).coerceAtMost(maxHeight * SLEEVE_MAX_HEIGHT)
-                val fullBleedSleeve = fullBleedArtwork && maxWidth <= maxHeight * FULL_BLEED_MAX_HEIGHT
+                // Auto: only a release with a 3:4 motion cover goes full screen, like Apple Music.
+                val wantsBleed = if (autoDetailArtwork) canvas?.portraitUrl != null else fullBleedArtwork
+                val fullBleedSleeve = wantsBleed && maxWidth <= maxHeight * FULL_BLEED_MAX_HEIGHT
+                // Glaze / Apple Music: a soft, lighter glow behind a framed cover,
+                // centred on it and following it as the page scrolls.
+                if (!isArtist && pageBackground == CollectionBackground.BLUR) {
+                    // Arpeggi: the cover blurred across the page, behind everything.
+                    FullArtworkBlurBackdrop(
+                        image = rememberFullArtworkBlurImage(page.thumbnailUrl),
+                        modifier = Modifier.matchParentSize(),
+                    )
+                }
+                if (!isArtist && !fullBleedSleeve && pageBackground == CollectionBackground.APPLE) {
+                    val darkPage = palette.onBackground.luminance() > 0.5f
+                    val glowColor = lerp(palette.background, Color.White, if (darkPage) 0.17f else 0.32f)
+                    val coverCentrePx = with(LocalDensity.current) { (topBarContentPadding() + sleeveSize / 2).toPx() }
+                    Box(
+                        Modifier
+                            .matchParentSize()
+                            .drawWithCache {
+                                val header = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == 0 }
+                                val glowY = if (header != null) header.offset + coverCentrePx else -size.width
+                                val brush = Brush.radialGradient(
+                                    0f to glowColor,
+                                    1f to palette.background,
+                                    center = Offset(size.width / 2f, glowY),
+                                    radius = size.width * 0.86f,
+                                )
+                                onDrawBehind { drawRect(brush) }
+                            },
+                    )
+                }
                 // A folder's grid view: the same column count the Library's
                 // "Show all" grids reach at this width.
                 val gridColumns = libraryGrid(maxWidth - PAGE_GUTTER * 2).columns
@@ -578,7 +718,7 @@ fun DetailScreen(
                     reorder(palette)
                 } else LazyColumn(
                     state = listState,
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().nestedScroll(searchGesture),
                     // The artist photo runs edge-to-edge up under the glass bar;
                     // a release header clears the bar itself, see [ReleaseHeader].
                     contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding()),
@@ -594,29 +734,20 @@ fun DetailScreen(
                         fullBleed = fullBleedSleeve,
                         canvas = canvas,
                         songs = songs,
+                        albumInfo = albumInfo,
+                        losslessSource = losslessSource,
                         onPlay = { onSongClick(songs, 0) },
                         onShuffle = { onShuffle(songs) },
                         // A folder's credit says where its tracks live, not who made them.
                         onArtistClick = onArtistClick.takeIf { folder == null },
                         onToggleLibrary = onToggleLibrary,
+                        onDownloadToServer = onDownloadToServer,
+                        serverDownload = serverDownload,
                         onDownloadAll = folder?.onDownload?.let { download -> { download(songs) } },
                     )
                 }
             }
 
-            if (searching) {
-                item(key = "search") {
-                    DetailSearchField(
-                        query = query,
-                        onQueryChange = { query = it },
-                        onClose = closeSearch,
-                        autoFocus = focusSearch,
-                        onFocused = { focusSearch = false },
-                        palette = palette,
-                        type = page.type,
-                    )
-                }
-            }
 
             val description = page.description
 
@@ -666,6 +797,10 @@ fun DetailScreen(
                 (page.type == BrowseType.ALBUM || isArtist)) || hasStats || aboutSignature != null
             fun LazyListScope.aboutItem() {
                 if (!showAbout) return
+                if (!isArtist && page.type == BrowseType.ALBUM && !description.isNullOrBlank()) {
+                    item(key = "about") { AlbumDescription(description, palette) }
+                    return
+                }
                 item(key = "about") {
                     // Clear of the last shelf above it.
                     Box(Modifier.padding(top = if (isArtist) 28.dp else 0.dp)) {
@@ -702,6 +837,19 @@ fun DetailScreen(
                 }
             }
             if (!isArtist) aboutItem()
+            if (page.browseId.startsWith(com.music.bitchord.data.sources.GlazeCompanion.RELEASE_PREFIX)) {
+                item(key = "release-countdown") {
+                    val upcoming by com.music.bitchord.data.sources.GlazeCompanion.upcoming.collectAsStateWithLifecycle()
+                    val release = upcoming.firstOrNull { "release:${it.id}" == page.browseId }
+                    if (release != null) ReleaseCountdown(release, palette)
+                }
+            }
+            if (!isArtist && songs.isNotEmpty()) {
+                item(key = "tracks-divider") {
+                    // A playlist's rows carry artwork, so its separators start after it.
+                    AlbumDivider(palette, start = if (page.type == BrowseType.ALBUM) ALBUM_DIVIDER_INSET else ROW_DIVIDER_INSET)
+                }
+            }
 
             when (val state = page.songs) {
                 is UiState.Loading -> detailSkeleton(isArtist)
@@ -776,6 +924,12 @@ fun DetailScreen(
                     ) { position, entry ->
                         val song = entry.value
                         val isCurrent = isCurrentRow(song)
+                        // Disc headers only while the rows are in the album's own order.
+                        val showDiscs = numbered && discs.isNotEmpty() && songSort == SongSort.DEFAULT && query.isBlank()
+                        val disc = discs[song.videoId]
+                        if (showDiscs && disc != null && (position == 0 || discs[matches[position - 1].value.videoId] != disc)) {
+                            DiscHeading(disc, palette)
+                        }
                         SongRow(
                             song = if (numbered) {
                                 song
@@ -790,7 +944,7 @@ fun DetailScreen(
                             rowBackground = Color.Transparent,
                             // The track's place on the release, not its place in
                             // what the filter — or a sort — left standing.
-                            trackNumber = originalTrackNumbers[song.videoId].takeIf { numbered },
+                            trackNumber = (discTrackNumbers[song.videoId] ?: originalTrackNumbers[song.videoId]).takeIf { numbered },
                             subtitleColor = palette.onBackgroundVariant,
                             downloadedTint = downloadedTint,
                             isCurrent = isCurrent,
@@ -798,10 +952,13 @@ fun DetailScreen(
                             activeTint = palette.accent,
                             searchPlayingStyle = true,
                         )
-                        if (position < matches.lastIndex) {
+                        val nextStartsDisc = showDiscs && position < matches.lastIndex &&
+                            discs[matches[position + 1].value.videoId] != disc
+                        if (position < matches.lastIndex && !nextStartsDisc) {
                             HorizontalDivider(
                                 modifier = Modifier.padding(
                                     start = if (numbered) NUMBERED_ROW_DIVIDER_INSET else ROW_DIVIDER_INSET,
+                                    end = ALBUM_DIVIDER_INSET,
                                 ),
                                 thickness = 0.5.dp,
                                 color = palette.divider,
@@ -842,13 +999,73 @@ fun DetailScreen(
                 }
             }
 
-            // Albums / Singles & EPs carousels (artist pages).
-            items(page.sections) { shelf ->
+            if (suggested.isEmpty() && playlistRecs.isNotEmpty() && query.isBlank()) {
+                item(key = "recs-separator") {
+                    // The heading carries 10dp of its own above the text, so this
+                    // leaves the same gap on both sides of the line.
+                    Box(Modifier.padding(top = RECS_SEPARATOR_GAP).bottomSectionShade()) {
+                        Box(Modifier.padding(bottom = RECS_SEPARATOR_GAP - 10.dp)) {
+                            AlbumDivider(palette, start = ROW_DIVIDER_INSET)
+                        }
+                    }
+                }
+                item(key = "recs-heading") {
+                    Column(Modifier.bottomSectionShade()) {
+                        SectionHeading(stringResource(R.string.recommended_songs), palette)
+                        Text(
+                            text = stringResource(R.string.recommended_songs_subtitle),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = palette.onBackgroundVariant,
+                            modifier = Modifier.padding(start = PAGE_GUTTER, end = PAGE_GUTTER, bottom = 8.dp),
+                        )
+                    }
+                }
+                val isRecCurrent = playingRowMatcher(playlistRecs, currentSong)
+                itemsIndexed(playlistRecs, key = { _, song -> "rec-${song.videoId}" }) { index, song ->
+                    Box(Modifier.bottomSectionShade()) { SuggestedSongRow(
+                        song = song,
+                        palette = palette,
+                        onClick = { onSongClick(playlistRecs, index) },
+                        onLongPress = { onSongLongPress(song) },
+                        // Not your playlist to add to, so the button queues it instead.
+                        onAdd = { onSongSwipe(song) },
+                        addIcon = Icons.AutoMirrored.Rounded.PlaylistAdd,
+                        addLabel = stringResource(R.string.add_to_queue),
+                        downloadedTint = downloadedTint,
+                        isCurrent = isRecCurrent(song),
+                        isPlaying = isRecCurrent(song) && isPlaying,
+                    ) }
+                }
+                item(key = "section-tail") { BottomSectionTail() }
+            }
+
+            if (page.type == BrowseType.ALBUM && songs.isNotEmpty() && query.isBlank()) {
+                item(key = "album-footer") {
+                    AlbumFooter(
+                        releaseDate = albumInfo?.releaseDate,
+                        songCount = songs.size,
+                        playtime = songs.playtime(),
+                        palette = palette,
+                        recordLabel = albumInfo?.recordLabel,
+                    )
+                }
+            }
+            // A release that isn't out yet has no "more like this": no shelves, and no darker tail.
+            val isReleasePage = page.browseId.startsWith(com.music.bitchord.data.sources.GlazeCompanion.RELEASE_PREFIX)
+            val albumSection = page.type == BrowseType.ALBUM && songs.isNotEmpty() && query.isBlank() && !isReleasePage
+
+            // Albums / Singles & EPs carousels (artist pages), and an album's recommendations.
+            itemsIndexed(if (isReleasePage) emptyList() else page.sections + recommendations, key = { i, _ -> "shelf-$i" }) { _, shelf ->
                 val canShowAll = shelf.items.size > ARTIST_ROW_MAX_ITEMS
                 val displayItems = remember(shelf.items) {
                     if (canShowAll) shelf.items.take(ARTIST_ROW_MAX_ITEMS) else shelf.items
                 }
-                Column(Modifier.padding(top = 22.dp)) {
+                // An album's shelves sit as close under the footer's line as the footer does.
+                Column(
+                    Modifier
+                        .then(if (albumSection) Modifier.bottomSectionShade() else Modifier)
+                        .padding(top = if (page.type == BrowseType.ALBUM) ALBUM_FOOTER_GAP - 10.dp else 22.dp),
+                ) {
                     SectionHeading(
                         title = shelf.title,
                         palette = palette,
@@ -874,6 +1091,7 @@ fun DetailScreen(
                     }
                 }
             }
+            if (albumSection) item(key = "section-tail") { BottomSectionTail() }
             if (isArtist) aboutItem()
         }
 
@@ -927,7 +1145,11 @@ private fun ReleaseHeader(
     onPlay: () -> Unit,
     onShuffle: () -> Unit,
     onArtistClick: ((String, String) -> Unit)?,
+    albumInfo: AppleMusicCanvas.AlbumInfo? = null,
+    losslessSource: Boolean = false,
     onToggleLibrary: (() -> Unit)?,
+    onDownloadToServer: (() -> Unit)? = null,
+    serverDownload: com.music.bitchord.data.sources.GlazeCompanion.Job? = null,
     /** The Cached songs folder's: saves every track on it to Downloads. Null hides it. */
     onDownloadAll: (() -> Unit)? = null,
 ) {
@@ -945,10 +1167,16 @@ private fun ReleaseHeader(
         modifier = Modifier
             .fillMaxWidth()
             // Clear of the floating bar, which only a full-bleed sleeve runs under.
-            .padding(top = if (bleed) 0.dp else topBarContentPadding(), bottom = 18.dp),
+            // The same 12dp below the controls as between the tags and the controls.
+            .padding(top = if (bleed) 0.dp else topBarContentPadding(), bottom = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         if (bleed) {
+            // A 3:4 motion cover fills a taller header in its own shape; otherwise the square sleeve.
+            val tallClip = canvas?.portraitUrl?.let { canvas.copy(url = it, fallbackUrl = canvas.url, portraitUrl = null) }
+            // The clip fades out its own bottom edge, so a still left under it shows
+            // through there as a second, mismatched cover. Hidden once a frame is up.
+            var clipShown by remember(canvas) { mutableStateOf(false) }
             Box(
                 Modifier
                     .fillMaxWidth()
@@ -957,10 +1185,14 @@ private fun ReleaseHeader(
                     // colour where the sleeve has already gone.
                     .layout { measurable, constraints ->
                         val placeable = measurable.measure(constraints)
-                        val height = (placeable.height - FULL_BLEED_TITLE_OVERLAP.roundToPx()).coerceAtLeast(0)
+                        val height = if (tallClip != null) {
+                            (placeable.width * TALL_HEADER_LAYOUT_RATIO).toInt()
+                        } else {
+                            (placeable.height - FULL_BLEED_TITLE_OVERLAP.roundToPx()).coerceAtLeast(0)
+                        }
                         layout(placeable.width, height) { placeable.place(0, 0) }
                     }
-                    .aspectRatio(1f),
+                    .aspectRatio(if (tallClip != null) TALL_COVER_ASPECT else 1f),
             ) {
                 AsyncImage(
                     model = page.thumbnailUrl.artworkAt(HEADER_ART_PX),
@@ -969,6 +1201,7 @@ private fun ReleaseHeader(
                     onState = { artFailed = it is AsyncImagePainter.State.Error },
                     modifier = Modifier
                         .matchParentSize()
+                        .alpha(if (clipShown) 0f else 1f)
                         // The mask below erases part of what this layer drew,
                         // which it can only do in a buffer of its own.
                         .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
@@ -992,11 +1225,12 @@ private fun ReleaseHeader(
                 )
                 // Beside the still rather than inside its layer: a clip's
                 // TextureView takes no Compose mask, so it dissolves itself.
-                canvas?.let { clip ->
+                (tallClip ?: canvas)?.let { clip ->
                     CanvasArtworkPlayer(
                         canvas = clip,
                         isPlaying = true,
                         bottomFade = FULL_BLEED_FADE_FRACTION,
+                        onRenderedChanged = { clipShown = it },
                         modifier = Modifier.matchParentSize(),
                     )
                 }
@@ -1005,8 +1239,7 @@ private fun ReleaseHeader(
             Modifier
                 .size(sleeveSize)
                 .shadow(SLEEVE_SHADOW, SLEEVE_SHAPE)
-                .background(palette.elevated)
-                .thumbnailBorder(SLEEVE_SHAPE),
+                .background(palette.elevated),
         ) {
             // A cover that isn't there, or wouldn't load — a device folder, a
             // playlist with nothing on it yet, files with no picture — gets a
@@ -1040,10 +1273,10 @@ private fun ReleaseHeader(
             }
         }
 
-        Spacer(Modifier.height(20.dp))
+        Spacer(Modifier.height(if (bleed) 6.dp else 19.dp))
         Text(
             text = page.title,
-            style = MaterialTheme.typography.headlineMedium,
+            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold),
             color = palette.onBackground,
             textAlign = TextAlign.Center,
             maxLines = 2,
@@ -1051,14 +1284,11 @@ private fun ReleaseHeader(
             modifier = Modifier.padding(horizontal = HEADER_GUTTER),
         )
         if (credit.isNotBlank()) {
-            Spacer(Modifier.height(2.dp))
+            Spacer(Modifier.height(3.dp))
             Text(
                 text = credit,
-                style = MaterialTheme.typography.titleLarge.copy(
-                    fontWeight = FontWeight.Normal,
-                    fontSize = 19.sp,
-                ),
-                color = palette.onBackgroundVariant,
+                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Normal),
+                color = palette.onBackground.copy(alpha = 0.88f),
                 textAlign = TextAlign.Center,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -1075,30 +1305,60 @@ private fun ReleaseHeader(
                     },
             )
         }
-        if (meta.isNotBlank()) {
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = meta,
-                style = MaterialTheme.typography.labelMedium,
-                color = palette.onBackgroundVariant,
-                textAlign = TextAlign.Center,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+        // Apple Music's line for an album: genre, year, and Lossless when it can be had.
+        // Track count and length move to the footer under the tracks.
+        val isAlbum = page.type == BrowseType.ALBUM
+        val year = albumInfo?.releaseDate?.take(4) ?: RELEASE_YEAR.find(page.subtitle)?.value
+        val headerMeta = if (isAlbum) listOfNotNull(albumInfo?.genre, year).joinToString(" · ") else meta
+        val showLossless = isAlbum && losslessSource && albumInfo?.lossless == true
+        if (headerMeta.isNotBlank() || showLossless) {
+            Spacer(Modifier.height(5.dp))
+            Row(
                 modifier = Modifier.padding(horizontal = HEADER_GUTTER),
-            )
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                val metaStyle = MaterialTheme.typography.bodySmall
+                if (headerMeta.isNotBlank()) {
+                    Text(
+                        text = headerMeta,
+                        style = metaStyle,
+                        color = palette.onBackgroundVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                }
+                if (showLossless) {
+                    if (headerMeta.isNotBlank()) Text(" · ", style = metaStyle, color = palette.onBackgroundVariant)
+                    Icon(
+                        painter = painterResource(R.drawable.ic_lossless_label),
+                        contentDescription = null,
+                        tint = palette.onBackgroundVariant,
+                        modifier = Modifier.size(width = 17.dp, height = 9.dp),
+                    )
+                    Spacer(Modifier.width(3.dp))
+                    Text(
+                        text = stringResource(
+                            if (albumInfo?.hiRes == true) R.string.hi_res_lossless_label else R.string.lossless,
+                        ),
+                        style = metaStyle,
+                        color = palette.onBackgroundVariant,
+                    )
+                }
+            }
         }
 
         if (songs.isNotEmpty()) {
             // Only where YouTube said the release can be saved and the caller
             // is willing to take the write — see [onToggleLibrary].
             val library = page.library?.takeIf { onToggleLibrary != null }
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(12.dp))
             Row(
                 modifier = Modifier
                     .widthIn(max = RELEASE_ACTIONS_MAX_WIDTH)
                     .fillMaxWidth()
                     .padding(horizontal = HEADER_GUTTER),
-                horizontalArrangement = Arrangement.spacedBy(RELEASE_ACTION_GAP),
+                horizontalArrangement = Arrangement.spacedBy(RELEASE_ACTION_GAP, Alignment.CenterHorizontally),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (page.browseId.startsWith("local:")) {
@@ -1147,7 +1407,7 @@ private fun ReleaseHeader(
                     onClick = onPlay,
                     filled = true,
                     size = RELEASE_SIDE_BUTTON,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.width(RELEASE_PLAY_WIDTH),
                 )
                 if (library != null) {
                     CircleIconButton(
@@ -1161,6 +1421,20 @@ private fun ReleaseHeader(
                         },
                         onClick = { onToggleLibrary?.invoke() },
                         haptic = if (library.saved) Haptic.ToggleOff else Haptic.ToggleOn,
+                        size = RELEASE_SIDE_BUTTON,
+                    )
+                } else if (onDownloadToServer != null) {
+                    // No library to save to here, but a music server to download into:
+                    // the companion fetches the album into it (a tick once it's there).
+                    CircleIconButton(
+                        icon = when {
+                            serverDownload?.finished == true -> BitChordIcons.Check
+                            serverDownload?.active == true -> Icons.Rounded.HourglassTop
+                            serverDownload?.failed == true -> Icons.Rounded.Refresh
+                            else -> Icons.Rounded.CloudDownload
+                        },
+                        contentDescription = stringResource(R.string.download_to_server),
+                        onClick = onDownloadToServer,
                         size = RELEASE_SIDE_BUTTON,
                     )
                 } else {
@@ -1179,99 +1453,6 @@ private fun ReleaseHeader(
     }
 }
 
-/**
- * The filter box, shown under the header while the top bar's search button is on.
- *
- * Live rather than submit-on-enter, and for the same reason the Local Music
- * one is (see `LocalSearchField`): the list it narrows is already in memory, so
- * there is nothing for a submit action to wait for.
- *
- * Glass rather than a filled field — it is one of the header's controls that
- * happens to be typed into, and it sits close enough to the circles that a
- * Material text field beside them would read as a different app's furniture.
- */
-@Composable
-private fun DetailSearchField(
-    query: String,
-    onQueryChange: (String) -> Unit,
-    onClose: () -> Unit,
-    autoFocus: Boolean,
-    onFocused: () -> Unit,
-    palette: ArtworkPalette,
-    type: BrowseType,
-) {
-    // Opened by a tap on a button, which is as clear a statement of intent as
-    // the keyboard is going to get — so it comes up with the field rather than
-    // making the tap land twice. Once only: see [autoFocus]'s owner.
-    val focus = remember { FocusRequester() }
-    LaunchedEffect(autoFocus) {
-        if (autoFocus) {
-            focus.requestFocus()
-            onFocused()
-        }
-    }
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = HEADER_GUTTER)
-            .padding(bottom = 10.dp)
-            .height(46.dp)
-            .clip(PILL_SHAPE)
-            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.6f))
-            .border(0.5.dp, Color.White.copy(alpha = 0.10f), PILL_SHAPE)
-            .padding(horizontal = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            imageVector = BitChordIcons.Search,
-            contentDescription = null,
-            tint = palette.onBackgroundVariant,
-            modifier = Modifier.size(18.dp),
-        )
-        Spacer(Modifier.width(10.dp))
-        Box(Modifier.weight(1f)) {
-            if (query.isEmpty()) {
-                Text(
-                    text = stringResource(R.string.search_this_list),
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = palette.onBackgroundVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            BasicTextField(
-                value = query,
-                onValueChange = onQueryChange,
-                singleLine = true,
-                textStyle = MaterialTheme.typography.bodyLarge.copy(color = palette.onBackground),
-                cursorBrush = SolidColor(palette.accent),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .focusRequester(focus),
-            )
-        }
-        Box(
-            modifier = Modifier
-                .size(30.dp)
-                .clip(CircleShape)
-                // Clearing and closing are the same gesture: an empty filter
-                // showing an unfiltered list is a row of furniture with nothing
-                // left to do.
-                .clickable { if (query.isEmpty()) onClose() else onQueryChange("") },
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                imageVector = Icons.Rounded.Close,
-                contentDescription = stringResource(
-                    if (query.isEmpty()) R.string.close_search else R.string.clear_search,
-                ),
-                tint = palette.onBackgroundVariant,
-                modifier = Modifier.size(17.dp),
-            )
-        }
-    }
-}
 
 internal fun List<Song>.sortedForDetail(sort: SongSort): List<Song> = when (sort) {
     SongSort.DEFAULT -> this
@@ -2062,7 +2243,6 @@ private fun CompactSongRow(
                 modifier = Modifier
                     .matchParentSize()
                     .clip(RoundedCornerShape(7.dp))
-                    .thumbnailBorder(RoundedCornerShape(7.dp))
                     .background(palette.elevated),
             )
             if (isCurrent && isPlaying) SearchPlayingBars(Modifier.align(Alignment.Center))
@@ -2106,6 +2286,8 @@ private fun SuggestedSongRow(
     downloadedTint: Color? = null,
     isCurrent: Boolean = false,
     isPlaying: Boolean = false,
+    addIcon: ImageVector = Icons.Rounded.Add,
+    addLabel: String? = null,
 ) {
     Row(
         modifier = Modifier
@@ -2126,7 +2308,6 @@ private fun SuggestedSongRow(
                 modifier = Modifier
                     .matchParentSize()
                     .clip(RoundedCornerShape(8.dp))
-                    .thumbnailBorder(RoundedCornerShape(8.dp))
                     .background(palette.elevated),
             )
             if (isCurrent && isPlaying) SearchPlayingBars(Modifier.align(Alignment.Center))
@@ -2160,8 +2341,8 @@ private fun SuggestedSongRow(
             contentAlignment = Alignment.Center,
         ) {
             Icon(
-                Icons.Rounded.Add,
-                contentDescription = stringResource(R.string.add_to_playlist),
+                addIcon,
+                contentDescription = addLabel ?: stringResource(R.string.add_to_playlist),
                 tint = palette.accent,
                 modifier = Modifier.size(20.dp),
             )
@@ -2369,7 +2550,6 @@ private fun SectionCard(
                 .fillMaxWidth()
                 .aspectRatio(1f)
                 .clip(RoundedCornerShape(10.dp))
-                .thumbnailBorder(RoundedCornerShape(10.dp))
                 .background(palette.elevated),
         )
         Spacer(Modifier.height(8.dp))
@@ -2505,5 +2685,321 @@ private fun List<Song>.playtime(): String? {
         minutes <= 0 -> null
         minutes < 60 -> stringResource(R.string.minutes_short, minutes.toInt())
         else -> stringResource(R.string.hours_minutes_short, (minutes / 60).toInt(), (minutes % 60).toInt())
+    }
+}
+
+
+/**
+ * Glaze's album blurb: two lines with MORE at the end; a tap opens the rest in
+ * place. A hairline under it separates the header from the tracks.
+ */
+@Composable
+private fun AlbumDescription(text: String, palette: ArtworkPalette) {
+    var open by remember(text) { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { open = !open }
+                .padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
+            verticalAlignment = Alignment.Bottom,
+        ) {
+            Text(
+                text = if (open) text else text.replace("\n\n", " "),
+                modifier = Modifier.weight(1f),
+                maxLines = if (open) Int.MAX_VALUE else 2,
+                overflow = TextOverflow.Ellipsis,
+                color = palette.onBackgroundVariant,
+                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, lineHeight = 18.sp),
+            )
+            if (!open) {
+                Text(
+                    text = stringResource(R.string.more_caps),
+                    modifier = Modifier.padding(start = 4.dp),
+                    color = palette.onBackground,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+    }
+}
+
+/** Glaze's full-width hairline between an album's sections. */
+@Composable
+private fun AlbumDivider(palette: ArtworkPalette, start: Dp = ALBUM_DIVIDER_INSET) {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .padding(start = start, end = ALBUM_DIVIDER_INSET)
+            .height(1.dp)
+            .background(palette.divider),
+    )
+}
+
+/** Glaze's inset for an album's hairlines, at both ends; track separators end here too. */
+private val ALBUM_DIVIDER_INSET = 17.dp
+
+/** Space on each side of the line before a playlist's recommended songs. */
+private val RECS_SEPARATOR_GAP = 20.dp
+
+/** Arpeggi's darker floor under an album's footer or a playlist's recommendations. */
+private val BOTTOM_SECTION_SHADE = Color.Black.copy(alpha = 0.22f)
+
+/** Drawn by the section's own items so it moves (and stretches) with them. */
+private fun Modifier.bottomSectionShade() = drawBehind { drawRect(BOTTOM_SECTION_SHADE) }
+
+/** Carries the shade from the last item down past the bottom of the screen. */
+@Composable
+private fun BottomSectionTail() {
+    Spacer(
+        Modifier
+            .fillMaxWidth()
+            .height(1.dp)
+            .drawBehind { drawRect(BOTTOM_SECTION_SHADE, size = Size(size.width, size.height + 10_000f)) },
+    )
+}
+
+/** Under an album's tracks, as Apple Music closes it: the release date, then the count and length. */
+@Composable
+private fun AlbumFooter(
+    releaseDate: String?,
+    songCount: Int,
+    playtime: String?,
+    palette: ArtworkPalette,
+    recordLabel: String? = null,
+) {
+    val date = remember(releaseDate) {
+        releaseDate?.let {
+            runCatching {
+                java.time.LocalDate.parse(it).format(
+                    java.time.format.DateTimeFormatter.ofLocalizedDate(java.time.format.FormatStyle.LONG),
+                )
+            }.getOrNull()
+        }
+    }
+    Column(Modifier.fillMaxWidth()) {
+        AlbumDivider(palette)
+        Column(Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = ALBUM_FOOTER_GAP)) {
+            if (date != null) {
+                Text(date, color = palette.onBackground, style = MaterialTheme.typography.bodyLarge)
+                Spacer(Modifier.height(3.dp))
+            }
+            Text(
+                text = listOfNotNull(
+                    pluralStringResource(R.plurals.song_count_plural, songCount, songCount),
+                    playtime,
+                ).joinToString(" · "),
+                color = palette.onBackgroundVariant,
+                style = MaterialTheme.typography.bodyLarge,
+            )
+            if (recordLabel != null) {
+                Text(recordLabel, color = palette.onBackgroundVariant, style = MaterialTheme.typography.bodyLarge)
+            }
+        }
+    }
+}
+
+/**
+ * "More from <artist>" (their other releases) and "Similar albums" (the first
+ * release of each artist YouTube Music lists as similar), from artist pages.
+ */
+private suspend fun albumRecommendations(
+    albumId: String,
+    artistId: String,
+    moreFromTitle: String,
+    similarTitle: String,
+): List<HomeShelf> = withContext(Dispatchers.IO) {
+    fun ShelfItem.isRelease() = browseId?.startsWith("MPREb") == true
+    val items = YtMusicRepository.artistLanding(artistId).getOrNull()?.sections?.flatMap { it.items }
+        ?: return@withContext emptyList()
+    val releases = items.filter { it.isRelease() && it.browseId != albumId }.distinctBy { it.browseId }.take(12)
+    val similarArtists = items.filter { it.browseId?.startsWith("UC") == true && it.browseId != artistId }
+        .distinctBy { it.browseId }.take(8)
+    val similar = coroutineScope {
+        similarArtists.map { artist ->
+            async {
+                YtMusicRepository.artistLanding(artist.browseId!!).getOrNull()?.sections
+                    ?.flatMap { it.items }?.firstOrNull { it.isRelease() }
+                    ?.copy(subtitle = artist.title)
+            }
+        }.awaitAll().filterNotNull()
+    }
+    listOfNotNull(
+        HomeShelf(moreFromTitle, releases).takeIf { releases.isNotEmpty() },
+        HomeShelf(similarTitle, similar).takeIf { similar.isNotEmpty() },
+    )
+}
+
+
+/**
+ * The first name of a joint credit ("Travis Scott & Grand Theft Auto VI"), or
+ * null for a single artist. Catalogues often file a joint release under its
+ * lead artist alone, so a lookup that needs every credited name to match retries with this.
+ */
+private fun primaryArtist(credit: String): String? =
+    credit.split(" & ", ", ", " x ", " X ", " feat. ", " ft. ")
+        .first().trim().takeIf { it.isNotEmpty() && it != credit.trim() }
+
+
+/**
+ * Apple's catalogue entry for an album page (genre, date, lossless, cover
+ * colour). Shared by the page and MainActivity's bars, so both tint alike;
+ * [AppleMusicCanvas.albumInfo] caches, so the second caller costs nothing.
+ */
+@Composable
+internal fun rememberAlbumInfo(page: DetailPage?): AppleMusicCanvas.AlbumInfo? {
+    val album = page?.takeIf { it.type == BrowseType.ALBUM }
+    val credit = album?.let { p ->
+        p.headerLines(0).first.ifBlank { (p.songs as? UiState.Success)?.data?.firstOrNull()?.artist.orEmpty() }
+    }.orEmpty()
+    var info by remember(album?.browseId) { mutableStateOf<AppleMusicCanvas.AlbumInfo?>(null) }
+    LaunchedEffect(album?.browseId, album?.title, credit) {
+        if (album == null || credit.isBlank()) return@LaunchedEffect
+        info = withContext(Dispatchers.IO) {
+            runCatching {
+                AppleMusicCanvas.albumInfo(album.title, credit)
+                    ?: primaryArtist(credit)?.let { AppleMusicCanvas.albumInfo(album.title, it) }
+            }.getOrNull()
+        } ?: info
+    }
+    return info
+}
+
+/** Apple's cover colour as the palette's key colour, the way Apple Music tints the page. */
+internal fun AppleMusicCanvas.AlbumInfo.keyColors(): ArtworkKeyColors? =
+    bgColor?.let { Color(0xFF000000.toInt() or it) }?.let { ArtworkKeyColors(background = it, accent = it) }
+
+
+/**
+ * The page's colours for the chosen [CollectionBackground]: Apple's cover colour,
+ * the artwork-estimated single tint (blurred pages, whose foot it approximates),
+ * or BitChord's classic palette. Shared with MainActivity's bars so both agree.
+ */
+@Composable
+internal fun rememberPagePalette(
+    page: DetailPage?,
+    imageUrl: String?,
+    artistKeys: ArtworkKeyColors?,
+    albumInfo: AppleMusicCanvas.AlbumInfo?,
+): ArtworkPalette {
+    val style by AppSettings.collectionBackground.collectAsStateWithLifecycle()
+    val release = page != null && page.type != BrowseType.ARTIST
+    return rememberArtworkPalette(
+        imageUrl = imageUrl,
+        keyColors = artistKeys ?: albumInfo?.keyColors()?.takeIf { style == CollectionBackground.APPLE },
+        collection = release && style != CollectionBackground.CLASSIC,
+    )
+}
+
+/** Up to ten songs from YouTube Music radios of three of [songs], minus what is already there. */
+private suspend fun playlistRecommendations(songs: List<Song>): List<Song> = withContext(Dispatchers.IO) {
+    val have = songs.mapTo(HashSet()) { it.videoId }
+    coroutineScope {
+        songs.shuffled().take(3).map { seed ->
+            async { YtMusicRepository.radio(seed.videoId).getOrNull().orEmpty() }
+        }.awaitAll()
+    }.flatten().filter { it.videoId !in have }.distinctBy { it.videoId }.take(10)
+}
+
+/**
+ * Spotify's countdown on an upcoming album: days, hours, minutes and seconds to
+ * release day, ticking. The time of day is never announced, so it counts to local
+ * midnight, and says so — as Glaze does.
+ */
+@Composable
+private fun ReleaseCountdown(release: com.music.bitchord.data.sources.GlazeCompanion.Release, palette: ArtworkPalette) {
+    val target = remember(release.releaseDate) {
+        runCatching {
+            java.time.LocalDate.parse(release.releaseDate.take(10))
+                .atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+        }.getOrNull()
+    }
+    var now by remember { androidx.compose.runtime.mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(target) {
+        while (true) {
+            now = System.currentTimeMillis()
+            kotlinx.coroutines.delay(1_000)
+        }
+    }
+    val left = ((target ?: 0L) - now).coerceAtLeast(0L) / 1000
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(start = PAGE_GUTTER, end = PAGE_GUTTER, top = 12.dp, bottom = 26.dp)
+            .clip(RoundedCornerShape(22.dp))
+            .background(palette.onBackground.copy(alpha = 0.08f))
+            .padding(vertical = 18.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        if (target == null || left == 0L) {
+            Text(
+                stringResource(if (target == null) R.string.release_coming_soon else R.string.release_out_today),
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = palette.onBackground,
+            )
+        } else {
+            Row(horizontalArrangement = Arrangement.spacedBy(22.dp)) {
+                listOf(
+                    left / 86_400 to R.string.countdown_days,
+                    left % 86_400 / 3_600 to R.string.countdown_hours,
+                    left % 3_600 / 60 to R.string.countdown_minutes,
+                    left % 60 to R.string.countdown_seconds,
+                ).forEach { (value, label) ->
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            "%02d".format(value),
+                            style = MaterialTheme.typography.headlineMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = palette.onBackground,
+                        )
+                        Text(stringResource(label), style = MaterialTheme.typography.labelSmall, color = palette.onBackgroundVariant)
+                    }
+                }
+            }
+        }
+        Text(
+            stringResource(if (release.saved) R.string.release_presaved_note else R.string.release_presave_hint),
+            style = MaterialTheme.typography.bodySmall,
+            color = palette.onBackgroundVariant,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 10.dp),
+        )
+    }
+}
+
+/**
+ * Which disc each of [songs] is on, by video id, from Apple's track list [apple]
+ * (name, disc): by position when the two lists are the same length, else by title.
+ * Empty for a single-disc album.
+ */
+internal fun discNumbers(songs: List<Song>, apple: List<Pair<String, Int>>): Map<String, Int> {
+    if (apple.none { it.second > 1 } || songs.isEmpty()) return emptyMap()
+    if (apple.size == songs.size) return songs.withIndex().associate { (i, song) -> song.videoId to apple[i].second }
+    fun norm(s: String) = s.lowercase(Locale.ROOT).replace(Regex("""\s*[(\[][^)\]]*[)\]]"""), "").trim()
+    val byName = apple.groupBy({ norm(it.first) }, { it.second })
+    var last = 1
+    return songs.associate { song ->
+        last = byName[norm(song.title)]?.firstOrNull() ?: last
+        song.videoId to last
+    }
+}
+
+/** Glaze's disc divider: a disc glyph and "Disc 2". */
+@Composable
+private fun DiscHeading(disc: Int, palette: ArtworkPalette) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(start = PAGE_GUTTER, end = PAGE_GUTTER, top = 18.dp, bottom = 6.dp),
+    ) {
+        Icon(Icons.Rounded.Album, contentDescription = null, tint = palette.onBackgroundVariant, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(10.dp))
+        Text(
+            stringResource(R.string.disc_number, disc),
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = palette.onBackgroundVariant,
+        )
     }
 }

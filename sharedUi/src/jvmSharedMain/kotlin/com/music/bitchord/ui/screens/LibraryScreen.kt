@@ -318,7 +318,7 @@ private fun PlaylistShelf(
         onItemLongPress = onItemLongPress,
         onShowAll = onShowAll,
         pinnedPlaylists = pinnedPlaylists,
-        leadingCard = {
+        trailingCard = {
             Row(horizontalArrangement = Arrangement.spacedBy(LIBRARY_GRID_SPACING)) {
                 NewShelfCard(
                     icon = BitChordIcons.Plus,
@@ -332,7 +332,6 @@ private fun PlaylistShelf(
                         label = stringResource(Res.string.import_spotify),
                         subtitle = stringResource(Res.string.import_spotify_subtitle),
                         onClick = onImportSpotifyPlaylist,
-                        logo = Res.drawable.spotify_logo,
                     )
                 }
             }
@@ -360,9 +359,11 @@ internal fun LibraryGridShelf(
     onItemLongPress: (ShelfItem) -> Unit,
     onShowAll: () -> Unit,
     leadingCard: (@Composable () -> Unit)? = null,
+    /** Rides at the end of the row, after the shelf's own cards. */
+    trailingCard: (@Composable () -> Unit)? = null,
     pinnedPlaylists: List<String> = emptyList(),
 ) {
-    val leadingCount = if (leadingCard != null) 1 else 0
+    val leadingCount = (if (leadingCard != null) 1 else 0) + (if (trailingCard != null) 1 else 0)
     val visibleItems = shelf.items.take((LIBRARY_ROW_MAX_ITEMS - leadingCount).coerceAtLeast(0))
     Column(Modifier.padding(bottom = 26.dp)) {
         SectionHeader(
@@ -383,6 +384,7 @@ internal fun LibraryGridShelf(
                     isPinned = item.browseId != null && item.browseId in pinnedPlaylists,
                 )
             }
+            trailingCard?.let { card -> item(key = "trailing") { card() } }
         }
     }
 }

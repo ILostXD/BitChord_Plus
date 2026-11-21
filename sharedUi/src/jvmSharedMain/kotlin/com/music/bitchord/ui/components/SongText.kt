@@ -38,14 +38,6 @@ import androidx.compose.ui.unit.sp
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.ui.graphics.fadingEdges
 
-fun Modifier.thumbnailBorder(shape: Shape): Modifier = composed {
-    this.border(
-        width = 1.dp,
-        color = if (isSystemInDarkTheme()) Color.White.copy(alpha = 0.15f) else Color.Black.copy(alpha = 0.15f),
-        shape = shape
-    )
-}
-
 /**
  * A song title with the catalogue-standard explicit badge before it, so the
  * mark sits in the same place on every row however long the title runs.

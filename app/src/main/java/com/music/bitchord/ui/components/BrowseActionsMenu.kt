@@ -112,6 +112,12 @@ fun BrowseActionsMenu(
     /** Null where the menu was opened from the page it would navigate to. */
     onOpen: (() -> Unit)? = null,
     onDownloadAll: (() -> Unit)? = null,
+    /** Downloads the album into the music server through its companion; [serverDownloadStatus] says how far it got. */
+    onDownloadToServer: (() -> Unit)? = null,
+    serverDownloadStatus: String? = null,
+    /** Turns keeping this playlist in sync with the music server on or off; null where it isn't offered. */
+    onToggleServerSync: (() -> Unit)? = null,
+    serverSyncOn: Boolean = false,
     /**
      * Shares the release's own YouTube Music link — the album/playlist
      * counterpart to a track's own Share tile in [SongActionsMenu]. Null for
@@ -184,6 +190,22 @@ fun BrowseActionsMenu(
                 stringResource(R.string.add_to_queue),
                 onClick = onAddToQueue,
             )
+            onDownloadToServer?.let { download ->
+                ActionRow(
+                    SfIcons.Cloud,
+                    stringResource(R.string.download_to_server),
+                    description = serverDownloadStatus,
+                    onClick = download,
+                )
+            }
+            onToggleServerSync?.let { toggle ->
+                ActionRow(
+                    SfIcons.Cloud,
+                    stringResource(R.string.sync_playlist_to_server),
+                    description = stringResource(if (serverSyncOn) R.string.sync_playlist_on else R.string.sync_playlist_off),
+                    onClick = toggle,
+                )
+            }
             onDownloadAll?.let { download ->
                 // Saying which of the three it is, rather than offering the same row
                 // whatever the state — this is where a release is asked for now that
