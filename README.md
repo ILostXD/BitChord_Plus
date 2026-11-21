@@ -3,7 +3,7 @@
 <br/>
 <br/>
 
-<img src="Logo.png" alt="BitChord+ app icon" width="200" />
+<img src="Logo.png" alt="BitChord+ app icon" width="96" />
 
 # BitChord+
 
@@ -31,12 +31,16 @@
 BitChord+ is a fork of [BitChord](https://github.com/kushagrasinghx/BitChord) by Kushagra Singh. It keeps everything BitChord does and merges each BitChord release (the app shows which one it is based on in Settings), and adds:
 
 - **Navidrome, Jellyfin and other Subsonic servers as a source**, with *Import Playlist*: pick a playlist from your server and it becomes a YouTube Music playlist.
-- **Companion downloads** through [Glaze Companion](https://github.com/ILostXD/GlazeCompanion) (slskd, and Qobuz if you set it up): *Request for Navidrome* in every song's menu, and per-playlist *Sync to Navidrome*. Lossless is always preferred.
+- **Companion downloads** through the [BitChord+ Companion](https://github.com/ILostXD/BitChord_Plus_Companion) (slskd, and Qobuz if you set it up): *Request for Navidrome* in every song's menu, and per-playlist *Sync to Navidrome*. Lossless is always preferred.
 - **Library-aware matching.** Before anything is downloaded, the companion checks what you already own: another edition (deluxe vs. standard), a different credit line, the same song on another album. Anything it is unsure about asks you first, in the app and on a dashboard.
 - **Pre-Save.** Upcoming albums from the artists in your library get an *Upcoming* shelf on Home with a countdown. Tracks that are already out can be played from YouTube Music, and are downloaded into your library while you wait for the rest.
 - **Apple Music-style album pages**: disc sections, blurred, Apple Music or classic page backgrounds, full-screen album covers.
 - **Navigation bar options**: mini player and tab bar sizes, and Search either inside the bar or as its own circle.
 - **Its own app, its own updates.** BitChord+ installs next to BitChord and updates from this repository's releases.
+
+## BitChord+ Companion
+
+The downloads, Pre-Save and library matching run on a small service next to your Navidrome: **[BitChord+ Companion](https://github.com/ILostXD/BitChord_Plus_Companion)**. Set it up there, then enter its address under Sources → your Navidrome.
 
 ## Download
 

@@ -1,5 +1,9 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.components.SourceQuality
+import com.music.bitchord.ui.components.SourceQualityBadge
+import com.music.bitchord.ui.components.sourceQualityBadge
+import androidx.compose.runtime.produceState
 import com.music.bitchord.ui.components.trackArtSize
 import android.os.Build
 import com.music.bitchord.R
@@ -585,8 +589,12 @@ fun DetailScreen(
     }
     val visibleCanvas = canvas?.takeIf { !disableSpotifyCanvas || it.source != CanvasSource.SPOTIFY }
 
-    // Only promised when something configured can actually serve it lossless.
-    val losslessSource = remember { SourceRegistry.active().any { it.kind.canServeLossless } }
+    // What a source can actually serve these tracks at, asked of the sources the way playback
+    // would: Lossless / Hi-Res only when one really has it, High-Quality when that is the best
+    // it has, nothing otherwise.
+    val sourceQuality by produceState<SourceQuality?>(null, page.browseId, songs.firstOrNull()?.videoId) {
+        value = if (page.type == BrowseType.ALBUM) withContext(Dispatchers.IO) { albumSourceQuality(songs) } else null
+    }
     // "More from <artist>" and "Similar albums", built from the artist's YouTube Music page.
     var recommendations by remember(page.browseId) { mutableStateOf(emptyList<HomeShelf>()) }
     val albumArtistId = songs.firstNotNullOfOrNull { it.artistId }
@@ -741,7 +749,7 @@ fun DetailScreen(
                         canvas = visibleCanvas,
                         songs = songs,
                         albumInfo = albumInfo,
-                        losslessSource = losslessSource,
+                        sourceQuality = sourceQuality,
                         onPlay = { onPlay(songs) },
                         onShuffle = { onShuffle(songs) },
                         // A folder's credit says where its tracks live, not who made them.
@@ -1152,7 +1160,7 @@ private fun ReleaseHeader(
     onShuffle: () -> Unit,
     onArtistClick: ((String, String) -> Unit)?,
     albumInfo: AppleMusicCanvas.AlbumInfo? = null,
-    losslessSource: Boolean = false,
+    sourceQuality: SourceQuality? = null,
     onToggleLibrary: (() -> Unit)?,
     onDownloadToServer: (() -> Unit)? = null,
     serverDownload: com.music.bitchord.data.sources.GlazeCompanion.Job? = null,
@@ -1323,8 +1331,8 @@ private fun ReleaseHeader(
         val isAlbum = page.type == BrowseType.ALBUM
         val year = albumInfo?.releaseDate?.take(4) ?: RELEASE_YEAR.find(page.subtitle)?.value
         val headerMeta = if (isAlbum) listOfNotNull(albumInfo?.genre, year).joinToString(" · ") else meta
-        val showLossless = isAlbum && losslessSource && albumInfo?.lossless == true
-        if (headerMeta.isNotBlank() || showLossless) {
+        val shownQuality = sourceQuality.takeIf { isAlbum && (it == SourceQuality.HI_RES_LOSSLESS || it == SourceQuality.LOSSLESS || it == SourceQuality.HIGH_QUALITY) }
+        if (headerMeta.isNotBlank() || shownQuality != null) {
             Spacer(Modifier.height(5.dp))
             Row(
                 modifier = Modifier.padding(horizontal = HEADER_GUTTER),
@@ -1341,22 +1349,9 @@ private fun ReleaseHeader(
                         modifier = Modifier.weight(1f, fill = false),
                     )
                 }
-                if (showLossless) {
+                if (shownQuality != null) {
                     if (headerMeta.isNotBlank()) Text(" · ", style = metaStyle, color = palette.onBackgroundVariant)
-                    Icon(
-                        painter = painterResource(R.drawable.ic_lossless_label),
-                        contentDescription = null,
-                        tint = palette.onBackgroundVariant,
-                        modifier = Modifier.size(width = 17.dp, height = 9.dp),
-                    )
-                    Spacer(Modifier.width(3.dp))
-                    Text(
-                        text = stringResource(
-                            if (albumInfo?.hiRes == true) R.string.hi_res_lossless_label else R.string.lossless,
-                        ),
-                        style = metaStyle,
-                        color = palette.onBackgroundVariant,
-                    )
+                    SourceQualityBadge(quality = shownQuality, color = palette.onBackgroundVariant, style = metaStyle)
                 }
             }
         }
@@ -3028,4 +3023,26 @@ private fun DiscHeading(disc: Int, palette: ArtworkPalette) {
             color = palette.onBackgroundVariant,
         )
     }
+}
+
+/**
+ * The best quality any active source offers for [songs], judged on the first two tracks the way a
+ * source row is labelled: Hi-Res / Lossless / High-Quality, or null when no source has them.
+ */
+private suspend fun albumSourceQuality(songs: List<Song>): SourceQuality? {
+    val sample = songs.filterNot { it.videoId.startsWith(com.music.bitchord.data.model.SPOTIFY_MISSING_PREFIX) }.take(2)
+    if (sample.isEmpty()) return null
+    val rank = mapOf(SourceQuality.HIGH_QUALITY to 1, SourceQuality.LOSSLESS to 2, SourceQuality.HI_RES_LOSSLESS to 3)
+    var best: SourceQuality? = null
+    for (source in SourceRegistry.activeForPlayback()) {
+        for (song in sample) {
+            val target = com.music.bitchord.data.sources.TrackMatcher.targetOf(song)
+            val found = runCatching {
+                source.search("${song.title} ${song.artist}", 5, false, null, target)
+            }.getOrNull().orEmpty()
+            val quality = com.music.bitchord.data.sources.TrackMatcher.best(found, target)?.sourceQualityBadge() ?: continue
+            if ((rank[quality] ?: 0) > (rank[best] ?: 0)) best = quality
+        }
+    }
+    return best
 }
