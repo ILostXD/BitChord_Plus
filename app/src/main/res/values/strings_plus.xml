@@ -12,7 +12,7 @@
     <string name="disc_number">Disc %1$d</string>
     <string name="diwali_cta">Let\'s Celebrate</string>
     <string name="diwali_subtitle">May this festival of lights fill your home with joy and your days with music.</string>
-    <string name="diwali_title">BitChord wishes you a Happy Diwali</string>
+    <string name="diwali_title">BitChord+ wishes you a Happy Diwali</string>
     <string name="download_to_server">Download to Navidrome</string>
     <string name="hi_res_lossless_label">Hi-Res Lossless</string>
     <string name="import_choose_playlist">Choose a playlist from %1$s</string>
@@ -100,4 +100,7 @@
     <string name="sync_playlist_to_server">Sync to Navidrome</string>
     <string name="upcoming_releases">Upcoming</string>
     <string name="upcoming_releases_subtitle">From artists in your library and your Pre-Saves</string>
+    <string name="upstream_in_sync">Based on BitChord %1$s, in sync with the latest BitChord release</string>
+    <string name="upstream_behind">Based on BitChord %1$s. BitChord %2$s is out and not merged yet</string>
+    <string name="upstream_based_on">Based on BitChord %1$s</string>
 </resources>

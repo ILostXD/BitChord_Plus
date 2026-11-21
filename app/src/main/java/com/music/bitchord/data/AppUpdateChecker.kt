@@ -43,9 +43,21 @@ object AppUpdateChecker {
     private const val CACHE_SUBDIR = "updates"
 
     private const val LATEST_RELEASE_URL =
+        "https://api.github.com/repos/ILostXD/BitChord_Plus/releases/latest"
+
+    /** The original BitChord's releases: only read, to say whether BitChord+ has caught up with them. */
+    private const val UPSTREAM_RELEASE_URL =
         "https://api.github.com/repos/kushagrasinghx/BitChord/releases/latest"
 
     private val json = Json { ignoreUnknownKeys = true }
+
+    /** The newest original BitChord release, once known. */
+    private val _upstreamLatest = MutableStateFlow<String?>(null)
+    val upstreamLatest = _upstreamLatest.asStateFlow()
+
+    /** True when BitChord+ has merged the newest original release; null until that is known. */
+    fun inSyncWithUpstream(latest: String?): Boolean? =
+        latest?.let { !isNewer(it, BuildConfig.UPSTREAM_VERSION) }
 
     private val _available = MutableStateFlow<UpdateInfo?>(null)
     val available = _available.asStateFlow()
@@ -66,6 +78,12 @@ object AppUpdateChecker {
     private var downloadCancelled = false
 
     suspend fun check() = withContext(Dispatchers.IO) {
+        runCatching {
+            val request = Request.Builder().url(UPSTREAM_RELEASE_URL).build()
+            val body = Http.client.newCall(request).execute().use { if (it.isSuccessful) it.body?.string() else null }
+            (body?.let { json.parseToJsonElement(it) } as? JsonObject)?.get("tag_name")?.jsonPrimitive?.contentOrNull
+                ?.let { _upstreamLatest.value = it.removePrefix("v") }
+        }
         runCatching {
             val request = Request.Builder().url(LATEST_RELEASE_URL).build()
             val body = Http.client.newCall(request).execute().use { response ->

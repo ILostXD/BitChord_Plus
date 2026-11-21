@@ -41,8 +41,11 @@ buildscript {
  * No "v" in the name — the in-app updater reads it as a number; the "v" is the
  * release tag's alone.
  */
-extra["bitchordVersionCode"] = 42
-extra["bitchordVersionName"] = "1.10"
+// BitChord+ numbers its releases <upstream version>.<n>: 1.10.1 is the first one built on BitChord 1.10.
+extra["bitchordVersionCode"] = 4201
+extra["bitchordVersionName"] = "1.10.1"
+// The BitChord release this build has merged. AppUpdateChecker compares it with the newest upstream release.
+extra["bitchordUpstreamVersion"] = "1.10"
 
 /*
  * Bump this by hand before cutting each sideloaded test build ("beta2",

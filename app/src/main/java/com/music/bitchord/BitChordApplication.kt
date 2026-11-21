@@ -232,7 +232,7 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory, Configu
                     chain.request().newBuilder()
                         .header(
                             "User-Agent",
-                            "BitChord/${BuildConfig.VERSION_NAME} (Android; +https://github.com/kushagrasinghx/BitChord)",
+                            "BitChordPlus/${BuildConfig.VERSION_NAME} (Android; +https://github.com/ILostXD/BitChord_Plus)",
                         )
                         .build(),
                 )

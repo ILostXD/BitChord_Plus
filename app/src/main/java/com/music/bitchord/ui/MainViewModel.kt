@@ -1,5 +1,6 @@
 package com.music.bitchord.ui
 
+import kotlinx.coroutines.awaitAll
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -3476,21 +3477,65 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     subtitle = release.artist,
                     thumbnailUrl = release.cover ?: page.thumbnailUrl,
                     // Not on any service yet: rows that a tap skips, as a Spotify page's unfound ones.
-                    songs = UiState.Success(
-                        release.tracks.map { track ->
-                            Song(
-                                videoId = com.music.bitchord.data.model.SPOTIFY_MISSING_PREFIX + "release-" + track.id,
-                                title = track.title,
-                                artist = track.artist,
-                                albumName = release.title,
-                                thumbnailUrl = release.cover,
-                                durationText = track.durationSec?.let { "%d:%02d".format(it / 60, it % 60) },
-                            )
-                        },
-                    ),
+                    // The tracks already out are swapped for their YouTube Music copies just below.
+                    songs = UiState.Success(release.tracks.map { releaseTrackRow(release, it) }),
                     library = LibraryState(browseId, release.saved),
                 )
             }
+            if (release != null && release.tracks.any { it.released }) resolveReleasedTracks(browseId, release)
+        }
+    }
+
+    private fun releaseTrackRow(
+        release: com.music.bitchord.data.sources.GlazeCompanion.Release,
+        track: com.music.bitchord.data.sources.GlazeCompanion.ReleaseTrack,
+    ) = Song(
+        videoId = com.music.bitchord.data.model.SPOTIFY_MISSING_PREFIX + "release-" + track.id,
+        title = track.title,
+        artist = track.artist,
+        albumName = release.title,
+        thumbnailUrl = release.cover,
+        durationText = track.durationSec?.let { "%d:%02d".format(it / 60, it % 60) },
+    )
+
+    /**
+     * An album that is only partly out: the tracks that are can already be played from YouTube
+     * Music. Each released one is looked up there and, when it matches, replaces its row.
+     */
+    private suspend fun resolveReleasedTracks(
+        browseId: String,
+        release: com.music.bitchord.data.sources.GlazeCompanion.Release,
+    ) {
+        val gate = kotlinx.coroutines.sync.Semaphore(4)
+        val found: Map<String, Song?> = coroutineScope {
+            release.tracks.filter { it.released }.map { track ->
+                async<Pair<String, Song?>> {
+                    gate.withPermit {
+                        val candidates = YtMusicRepository.search("${track.title} ${track.artist}", SearchFilter.SONGS)
+                            .getOrNull().orEmpty().filterIsInstance<SearchResult.Track>().map { it.song }
+                        val target = com.music.bitchord.data.sources.TrackMatcher.Target(
+                            title = track.title,
+                            artist = track.artist,
+                            durationSec = track.durationSec,
+                            album = release.title,
+                        )
+                        track.id to com.music.bitchord.data.sources.TrackMatcher.best(candidates, target)
+                    }
+                }
+            }.awaitAll().toMap()
+        }
+        if (found.values.all { it == null }) return
+        _detailStack.value = _detailStack.value.map { page ->
+            if (page.browseId != browseId) page
+            else page.copy(
+                songs = UiState.Success(
+                    release.tracks.map { track ->
+                        // Keep the page's own cover and track names; only the playable id comes over.
+                        found[track.id]?.copy(thumbnailUrl = release.cover ?: found[track.id]?.thumbnailUrl)
+                            ?: releaseTrackRow(release, track)
+                    },
+                ),
+            )
         }
     }
 

@@ -82,7 +82,8 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.music.bitchord"
+        // Its own package, so BitChord+ installs beside the original BitChord instead of replacing it.
+        applicationId = "com.music.bitchordplus"
         // 26 keeps reach wide; real-time blur (RenderEffect) kicks in on API 31+,
         // Haze falls back to a translucent scrim below that.
         minSdk = 26
@@ -108,7 +109,8 @@ android {
         // Which release assets are this app's: the phone and TV APKs ship in
         // the same GitHub release, told apart by file name. See
         // AppUpdateChecker.apkAssetUrl.
-        buildConfigField("String", "UPDATE_APK_PREFIX", "\"BitChord-\"")
+        buildConfigField("String", "UPDATE_APK_PREFIX", "\"BitChordPlus-\"")
+        buildConfigField("String", "UPSTREAM_VERSION", "\"${rootProject.extra["bitchordUpstreamVersion"]}\"")
     }
 
     splits {

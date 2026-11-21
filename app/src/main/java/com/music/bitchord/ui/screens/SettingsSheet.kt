@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.BuildConfig
+import com.music.bitchord.data.AppUpdateChecker
 import com.music.bitchord.ui.icons.SfIcons
 import com.music.bitchord.wear.WatchInstaller
 import android.content.Context
@@ -2027,31 +2029,31 @@ fun SettingsScreen(
         // The version line is the page's colophon, not a setting: it belongs to
         // the whole list, so it goes when the list is narrowed to a few rows.
         if (section == null && searchQuery.isBlank()) {
+        // Whether BitChord+ has merged the newest original BitChord release.
+        val upstreamLatest by AppUpdateChecker.upstreamLatest.collectAsStateWithLifecycle()
+        val upstreamLine = when (AppUpdateChecker.inSyncWithUpstream(upstreamLatest)) {
+            true -> stringResource(R.string.upstream_in_sync, BuildConfig.UPSTREAM_VERSION)
+            false -> stringResource(R.string.upstream_behind, BuildConfig.UPSTREAM_VERSION, upstreamLatest.orEmpty())
+            null -> stringResource(R.string.upstream_based_on, BuildConfig.UPSTREAM_VERSION)
+        }
         Text(
             text = buildAnnotatedString {
-                append("bitchord $version  ")
+                append("BitChord+ $version  ")
                 val linkStyles = TextLinkStyles(
                     style = SpanStyle(
                         color = MaterialTheme.colorScheme.primary,
                         textDecoration = TextDecoration.Underline,
                     ),
                 )
-                withLink(LinkAnnotation.Url("https://github.com/kushagrasinghx/BitChord", linkStyles)) {
+                withLink(LinkAnnotation.Url("https://github.com/ILostXD/BitChord_Plus", linkStyles)) {
                     append("GitHub")
                 }
                 append("  ")
-                withLink(LinkAnnotation.Url("https://github.com/kushagrasinghx", linkStyles)) {
-                    append("Developer")
+                withLink(LinkAnnotation.Url("https://github.com/kushagrasinghx/BitChord", linkStyles)) {
+                    append("Original BitChord")
                 }
-                append("  ")
-                withLink(LinkAnnotation.Url("https://discord.gg/pDdKfrdHY6", linkStyles)) {
-                    append("Discord")
-                }
-                append("  ")
-                withLink(LinkAnnotation.Url("https://bitchord.kushagrasingh.in/", linkStyles)) {
-                    append("Website")
-                }
-                append("\n~YouTube Music & Listen Together Backend")
+                append("\n")
+                append(upstreamLine)
             },
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
