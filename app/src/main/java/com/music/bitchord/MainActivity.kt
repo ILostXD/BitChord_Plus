@@ -439,6 +439,7 @@ class MainActivity : AppCompatActivity() {
         // the request already standing by the time BitChordApp first reads it.
         PlayerDeepLink.consume(intent)
         JamInviteLink.consume(intent)
+        com.music.bitchord.data.sources.NavidromeIssues.consume(intent)
         // Likewise for a link tapped or shared from another app — see [MusicLink].
         MusicLink.consume(intent)
         setContent {
@@ -547,6 +548,7 @@ class MainActivity : AppCompatActivity() {
         setIntent(intent)
         PlayerDeepLink.consume(intent)
         JamInviteLink.consume(intent)
+        com.music.bitchord.data.sources.NavidromeIssues.consume(intent)
         MusicLink.consume(intent)
     }
 }
@@ -1180,7 +1182,6 @@ private fun BitChordApp(
     val hostOnlyMessage = stringResource(R.string.listen_together_host_only_notice)
     val showHostOnlyNotice: () -> Unit = { showQueueNotice(hostOnlyMessage) }
     val serverDownloads by viewModel.serverDownloads.collectAsStateWithLifecycle()
-    NavidromeReviewDialog(viewModel)
     // Re-read when Sources change, so a companion added there shows up at once.
     val sourceConfigs by com.music.bitchord.data.sources.SourceRegistry.configs.collectAsStateWithLifecycle()
     val companionServer = remember(sourceConfigs) { com.music.bitchord.data.sources.GlazeCompanion.server() }
@@ -1189,7 +1190,9 @@ private fun BitChordApp(
     val serverAutoDownload by AppSettings.serverAutoDownload.collectAsStateWithLifecycle()
     val playlistsForSync by viewModel.playlists.collectAsStateWithLifecycle()
     val syncedPlaylists by AppSettings.serverSyncedPlaylists.collectAsStateWithLifecycle()
-    NavidromeBackgroundWork(viewModel, serverAutoDownload, syncedPlaylists, playlistsForSync.size, companionServer?.id, libraryState)
+    NavidromeBackgroundWork(viewModel, serverAutoDownload, syncedPlaylists, playlistsForSync.size, companionServer?.id, libraryState) {
+        navigator.push(AppRoute.NavidromeDashboard)
+    }
     /** Sends an album to the music server's companion, saying so; null when it can't be. */
     val downloadToServer: (browseId: String?, type: BrowseType, title: String, subtitle: String, songs: List<Song>) -> (() -> Unit)? =
         { browseId, type, title, subtitle, songs ->
@@ -3262,6 +3265,8 @@ private fun BitChordApp(
                                 onEditSmb = { showSmbEditor = true },
                                 onConfirmJioSaavn = { confirmJioSaavn = true },
                             )
+                        } else if (pageRoute == AppRoute.NavidromeDashboard) {
+                            com.music.bitchord.ui.screens.NavidromeDashboardScreen(contentPadding = listPadding)
                         } else if (pageRoute == AppRoute.Downloads) {
                             DownloadManagerPage(
                                 onCleared = { navigator.pop() },
@@ -3341,6 +3346,7 @@ private fun BitChordApp(
                                 onLyricsSources = { showLyricsSources = true },
                                 onTranslationLanguage = { showTranslationLanguage = true },
                                 onSources = { navigator.push(AppRoute.Sources) },
+                                onNavidromeDashboard = { navigator.push(AppRoute.NavidromeDashboard) },
                                 onListenTogether = { navigator.push(AppRoute.ListenTogether) },
                                 onWearOs = { navigator.push(AppRoute.WearOs) },
                                 onSpotifyCanvasAuth = { showSpotifyCanvasAuth = true },
@@ -4039,6 +4045,7 @@ private fun BitChordApp(
                     title = when (route) {
                         AppRoute.Spotify -> stringResource(R.string.spotify)
                         AppRoute.Downloads -> stringResource(R.string.downloads)
+                        AppRoute.NavidromeDashboard -> ""
                         AppRoute.Discord -> "Discord"
                         AppRoute.History -> stringResource(R.string.history)
                         is AppRoute.LibraryShowAll -> route.shelf.title
@@ -6860,29 +6867,6 @@ private fun rememberUpcomingShelf(upcomingReleases: List<com.music.bitchord.data
     }
 }
 
-/** A request the companion paused to ask about: it already has something close. */
-@Composable
-private fun NavidromeReviewDialog(viewModel: MainViewModel) {
-    val pendingReviews by viewModel.pendingReviews.collectAsStateWithLifecycle()
-    pendingReviews.firstOrNull()?.let { review ->
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = {},
-            title = { androidx.compose.material3.Text(stringResource(R.string.review_dialog_title, review.title)) },
-            text = { androidx.compose.material3.Text("${review.artist}\n${review.job.summary.orEmpty()}") },
-            confirmButton = {
-                androidx.compose.material3.TextButton(onClick = { viewModel.answerReview(review, true) }) {
-                    androidx.compose.material3.Text(stringResource(R.string.review_download))
-                }
-            },
-            dismissButton = {
-                androidx.compose.material3.TextButton(onClick = { viewModel.answerReview(review, false) }) {
-                    androidx.compose.material3.Text(stringResource(R.string.review_keep))
-                }
-            },
-        )
-    }
-}
-
 /**
  * Mirror synced playlists into Navidrome (on start, and when the setting, the synced set or the
  * companion changes), and keep the Upcoming shelf's artists current.
@@ -6895,7 +6879,16 @@ private fun NavidromeBackgroundWork(
     playlistCount: Int,
     companionId: String?,
     libraryState: UiState<com.music.bitchord.data.model.LibraryPage>,
+    openDashboard: () -> Unit,
 ) {
+    // A notification asked for the dashboard.
+    val dashboardRequested by com.music.bitchord.data.sources.NavidromeIssues.openDashboard.collectAsStateWithLifecycle()
+    LaunchedEffect(dashboardRequested) {
+        if (dashboardRequested) {
+            com.music.bitchord.data.sources.NavidromeIssues.openDashboard.value = false
+            openDashboard()
+        }
+    }
     LaunchedEffect(mode, synced, companionId) { viewModel.syncPlaylistsToServer(force = true) }
     LaunchedEffect(playlistCount) { if (playlistCount > 0) viewModel.syncPlaylistsToServer(force = true) }
     val libraryArtistNames = remember(libraryState) {

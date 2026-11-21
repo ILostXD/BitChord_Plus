@@ -103,4 +103,24 @@
     <string name="upstream_in_sync">Based on BitChord %1$s, in sync with the latest BitChord release</string>
     <string name="upstream_behind">Based on BitChord %1$s. BitChord %2$s is out and not merged yet</string>
     <string name="upstream_based_on">Based on BitChord %1$s</string>
+    <string name="navidrome_issues_channel">Navidrome downloads that need you</string>
+    <string name="navidrome_failed_one">Could not add %1$s</string>
+    <string name="navidrome_failed_many">%1$d downloads could not be added</string>
+    <string name="navidrome_dashboard">Navidrome downloads</string>
+    <string name="navidrome_dashboard_settings">What was requested, what is downloading, and what needs a decision</string>
+    <string name="navidrome_dashboard_subtitle">Updates by itself</string>
+    <string name="navidrome_dashboard_none">Add your Navidrome and its companion address in Sources first</string>
+    <string name="navidrome_dashboard_offline">Can\'t reach the companion right now</string>
+    <string name="dashboard_needs_decision">Needs your decision</string>
+    <string name="dashboard_in_progress">In progress</string>
+    <string name="dashboard_nothing_downloading">Nothing is downloading</string>
+    <string name="dashboard_added">Added to your library</string>
+    <string name="dashboard_already_have">Already in your library</string>
+    <string name="dashboard_failed">Could not be added</string>
+    <string name="dashboard_download_anyway">Download it anyway?</string>
+    <string name="dashboard_import_anyway">Import anyway</string>
+    <string name="dashboard_try_again">Try again</string>
+    <string name="dashboard_album">Album</string>
+    <string name="dashboard_song">Song</string>
+    <string name="dashboard_reason_timeout">The search timed out</string>
 </resources>

@@ -1655,70 +1655,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var serverSyncJob: kotlinx.coroutines.Job? = null
     private var lastServerSync = 0L
 
-    /** Requests the companion has paused to ask whether to download anyway: see [GlazeCompanion.Job.review]. */
-    private val _pendingReviews = MutableStateFlow<List<com.music.bitchord.data.sources.GlazeCompanion.JobInfo>>(emptyList())
-    val pendingReviews: StateFlow<List<com.music.bitchord.data.sources.GlazeCompanion.JobInfo>> = _pendingReviews.asStateFlow()
-
-    private val notifiedReviews = HashSet<String>()
-    private val answeredReviews = HashSet<String>()
-
-    private fun reviewKey(info: com.music.bitchord.data.sources.GlazeCompanion.JobInfo) =
-        "${info.artist}|${info.title}|${info.kind}".lowercase()
-
     init {
-        // While the app is alive: look for requests waiting on an answer, and say so once each.
+        // While the app is open: look for requests that need the user, and say so with a notification.
         viewModelScope.launch {
             while (true) {
-                val server = com.music.bitchord.data.sources.GlazeCompanion.server()
-                if (server != null) {
-                    runCatching { com.music.bitchord.data.sources.GlazeCompanion.jobs(server) }.onSuccess { jobs ->
-                        // One prompt per request, however many records the companion holds for it,
-                        // and none for one just answered.
-                        val waiting = jobs.filter { it.job.review }
-                            .distinctBy { reviewKey(it) }
-                            .filterNot { reviewKey(it) in answeredReviews }
-                        _pendingReviews.value = waiting
-                        waiting.filter { notifiedReviews.add(it.job.id) }.forEach { notifyReview(it) }
-                    }
-                }
+                runCatching { com.music.bitchord.data.sources.NavidromeIssues.check(getApplication()) }
                 delay(REVIEW_POLL_MS)
             }
-        }
-    }
-
-    private fun notifyReview(info: com.music.bitchord.data.sources.GlazeCompanion.JobInfo) {
-        runCatching {
-            val app = getApplication<Application>()
-            val manager = app.getSystemService(android.app.NotificationManager::class.java) ?: return
-            if (!manager.areNotificationsEnabled()) return
-            manager.createNotificationChannel(
-                android.app.NotificationChannel("server_review", app.getString(R.string.review_channel_name), android.app.NotificationManager.IMPORTANCE_DEFAULT),
-            )
-            val open = android.app.PendingIntent.getActivity(
-                app, 0, app.packageManager.getLaunchIntentForPackage(app.packageName),
-                android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT,
-            )
-            manager.notify(
-                info.job.id.hashCode(),
-                androidx.core.app.NotificationCompat.Builder(app, "server_review")
-                    .setSmallIcon(R.drawable.ic_notification_logo)
-                    .setContentTitle(app.getString(R.string.review_notification_title, info.title))
-                    .setContentText(info.job.summary ?: info.artist)
-                    .setStyle(androidx.core.app.NotificationCompat.BigTextStyle().bigText(info.job.summary ?: info.artist))
-                    .setContentIntent(open)
-                    .setAutoCancel(true)
-                    .build(),
-            )
-        }
-    }
-
-    /** Answers a paused request: download it anyway, or keep what the library has. */
-    fun answerReview(info: com.music.bitchord.data.sources.GlazeCompanion.JobInfo, download: Boolean) {
-        answeredReviews += reviewKey(info)
-        _pendingReviews.value = _pendingReviews.value.filterNot { reviewKey(it) == reviewKey(info) }
-        val server = com.music.bitchord.data.sources.GlazeCompanion.server() ?: return
-        viewModelScope.launch {
-            runCatching { com.music.bitchord.data.sources.GlazeCompanion.decide(server, info.job.id, download) }
         }
     }
 

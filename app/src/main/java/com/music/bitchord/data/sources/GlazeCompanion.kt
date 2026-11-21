@@ -41,7 +41,16 @@ object GlazeCompanion {
     }
 
     /** A job as the companion lists it: what was asked for, and how it went. */
-    data class JobInfo(val job: Job, val artist: String, val title: String, val kind: String)
+    data class JobInfo(
+        val job: Job,
+        val artist: String,
+        val title: String,
+        val kind: String,
+        val album: String = "",
+        val canApprove: Boolean = false,
+        /** ISO time of the last change, for ordering. */
+        val updatedAt: String = "",
+    )
 
     /** The first music server with a companion address set in Sources. */
     fun server(): SourceConfig? = ServerLibrary.servers().firstOrNull { it.companionUrl.isNotBlank() }
@@ -68,6 +77,13 @@ object GlazeCompanion {
     /** Retries a failed job with its original request. */
     suspend fun retry(server: SourceConfig, jobId: String): Job =
         call(server, "/api/v1/acquisition/jobs", buildJsonObject { put("retry_id", jobId) }).toJob()
+
+    /** Imports a download whose tags did not match, after the user has seen the review. */
+    suspend fun approve(server: SourceConfig, jobId: String): Job =
+        call(server, "/api/v1/acquisition/jobs", buildJsonObject {
+            put("retry_id", jobId)
+            put("approve_metadata", true)
+        }).toJob()
 
     /** Answers a job that is waiting on the user: download it anyway, or keep what the library has. */
     suspend fun decide(server: SourceConfig, jobId: String, download: Boolean): Job =
@@ -198,7 +214,11 @@ object GlazeCompanion {
         (send(server, "/api/v1/acquisition/jobs", null, "GET") as? JsonArray).orEmpty().mapNotNull { element ->
             (element as? JsonObject)?.let {
                 runCatching {
-                    JobInfo(it.toJob(), it.text("Artist").orEmpty(), it.text("Title").orEmpty(), it.text("Kind").orEmpty())
+                    JobInfo(
+                        it.toJob(), it.text("Artist").orEmpty(), it.text("Title").orEmpty(), it.text("Kind").orEmpty(),
+                        it.text("AlbumTitle").orEmpty(), (it["CanApproveMetadata"] as? JsonPrimitive)?.booleanOrNull == true,
+                        it.text("UpdatedAt").orEmpty(),
+                    )
                 }.getOrNull()
             }
         }

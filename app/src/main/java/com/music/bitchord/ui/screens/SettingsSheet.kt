@@ -206,6 +206,7 @@ fun SettingsScreen(
     onLyricsSources: () -> Unit,
     onTranslationLanguage: () -> Unit,
     onSources: () -> Unit,
+    onNavidromeDashboard: () -> Unit = {},
     onListenTogether: () -> Unit,
     onWearOs: () -> Unit,
     onSpotifyCanvasAuth: () -> Unit,
@@ -536,6 +537,18 @@ fun SettingsScreen(
                         subtitle = sourceSubtitle,
                         onClick = onSources,
                     )
+                }
+                if (com.music.bitchord.data.sources.GlazeCompanion.server() != null) {
+                    val dashboardTitle = stringResource(R.string.navidrome_dashboard)
+                    val dashboardSubtitle = stringResource(R.string.navidrome_dashboard_settings)
+                    row(dashboardTitle, dashboardSubtitle, "navidrome", "companion", "downloads", "dashboard", "requests") {
+                        SettingsRow(
+                            icon = SfIcons.Cloud,
+                            title = dashboardTitle,
+                            subtitle = dashboardSubtitle,
+                            onClick = onNavidromeDashboard,
+                        )
+                    }
                 }
                 // One line on purpose: it qualifies the row above rather than
                 // being a setting of its own, so it reads as part of Sources.
