@@ -30,6 +30,9 @@
  *   it last saw — so one shared instance is invalidated by whichever surface
  *   drew last and re-creates all three outlines every frame. A factory gives
  *   each surface its own.
+ * - `mergeStandaloneWhenExpanded` folds the standalone tab into the expanded
+ *   tab pill as its last tab, with its title, so the two share one surface;
+ *   collapsed, it is still the separate circle at the end of the row.
  * - The expanded tab group's selection pill is a lifted glass lens in motion
  *   (see [GlassSelectionPill]): a tap inflates it past the bar, carries it to
  *   the tab on a spring, squashes it with its acceleration, and sheds the glass
@@ -197,6 +200,8 @@ fun FloatingTabBar(
  * @param inlineAccessory the accessory composable that appears in inline state (e.g., compact media player)
  * @param expandedAccessory the accessory composable that appears in expanded state (e.g., full media player)
  * @param contentKey optional key that when changed retriggers the content lambda
+ * @param mergeStandaloneWhenExpanded draw the standalone tab as the last tab of the
+ * expanded pill instead of a circle beside it. The inline state is unaffected.
  * @param content the content defining the tabs
  */
 @Composable
@@ -212,6 +217,7 @@ fun FloatingTabBar(
     sizes: FloatingTabBarSizes = FloatingTabBarDefaults.sizes(),
     elevations: FloatingTabBarElevations = FloatingTabBarDefaults.elevations(),
     contentKey: Any? = null,
+    mergeStandaloneWhenExpanded: Boolean = false,
     content: FloatingTabBarScope.() -> Unit
 ) {
     val scope = remember(contentKey) { FloatingTabBarScopeImpl().apply { content() } }
@@ -242,6 +248,7 @@ fun FloatingTabBar(
                 ExpandedBar(
                     scope = scope,
                     selectedTabKey = selectedTabKey,
+                    mergeStandalone = mergeStandaloneWhenExpanded,
                     accessory = expandedAccessory,
                     isAccessoryShared = isAccessoryShared,
                     colors = colors,
@@ -396,24 +403,16 @@ interface FloatingTabBarScope {
      * @param icon Composable content for the tab icon
      * @param onClick Callback invoked when the tab is clicked
      * @param indication Optional indication provider for touch feedback, defaults to LocalIndication.current
+     * @param title Shown only when the tab is merged into the expanded pill
      */
     fun standaloneTab(
         key: Any,
         icon: @Composable () -> Unit,
         onClick: () -> Unit,
-        indication: (@Composable () -> Indication)? = { LocalIndication.current }
+        indication: (@Composable () -> Indication)? = { LocalIndication.current },
+        title: @Composable () -> Unit = {},
     )
 
-    /**
-     * A circle shown at the end of the collapsed row only, for a tab that sits in the
-     * expanded pill like the rest: it is never the collapsed row's own tab.
-     */
-    fun inlineStandaloneTab(
-        key: Any,
-        icon: @Composable () -> Unit,
-        onClick: () -> Unit,
-        indication: (@Composable () -> Indication)? = { LocalIndication.current }
-    )
 }
 
 @Composable
@@ -431,7 +430,7 @@ private fun SharedTransitionScope.InlineBar(
     animatedVisibilityScope: AnimatedVisibilityScope
 ) {
     val inlineTab = scope.getInlineTab(selectedTabKey)
-    val standaloneTab = scope.standaloneTab ?: scope.inlineStandaloneTab
+    val standaloneTab = scope.standaloneTab
     val hasInlineTab = inlineTab != null
 
     // With an accessory the row spans the full width ([tab][accessory][standalone],
@@ -631,6 +630,7 @@ private fun SharedTransitionScope.InlineAccessory(
 private fun SharedTransitionScope.ExpandedBar(
     scope: FloatingTabBarScopeImpl,
     selectedTabKey: Any?,
+    mergeStandalone: Boolean,
     accessory: (@Composable SharedTransitionScope.(Modifier, AnimatedVisibilityScope) -> Unit)?,
     isAccessoryShared: Boolean,
     colors: FloatingTabBarColors,
@@ -640,8 +640,12 @@ private fun SharedTransitionScope.ExpandedBar(
     tabBarContentModifier: @Composable () -> Modifier,
     animatedVisibilityScope: AnimatedVisibilityScope
 ) {
-    val standaloneTab = scope.standaloneTab
-    val hasTabGroup = scope.tabs.isNotEmpty()
+    val standaloneTab = scope.standaloneTab.takeUnless { mergeStandalone }
+    val pillTabs = scope.standaloneTab
+        ?.takeIf { mergeStandalone }
+        ?.let { scope.tabs + it }
+        ?: scope.tabs
+    val hasTabGroup = pillTabs.isNotEmpty()
 
     // The accessory spans the full width above the tab row; the tab pill and the
     // standalone tab are packed together and centered (iOS 26 style).
@@ -677,6 +681,7 @@ private fun SharedTransitionScope.ExpandedBar(
             if (hasTabGroup) {
                 ExpandedTabs(
                     scope = scope,
+                    tabs = pillTabs,
                     selectedTabKey = selectedTabKey,
                     shapes = shapes,
                     sizes = sizes,
@@ -746,6 +751,8 @@ private fun SharedTransitionScope.ExpandedAccessory(
 @Composable
 private fun SharedTransitionScope.ExpandedTabs(
     scope: FloatingTabBarScopeImpl,
+    /** The pill's tabs: [scope]'s own, plus the standalone one when it is merged in. */
+    tabs: List<FloatingTabBarTab>,
     selectedTabKey: Any?,
     shapes: FloatingTabBarShapes,
     sizes: FloatingTabBarSizes,
@@ -756,7 +763,7 @@ private fun SharedTransitionScope.ExpandedTabs(
     tabBarContentModifier: @Composable () -> Modifier
 ) {
     val inlineTab = scope.getInlineTab(selectedTabKey)
-    val selectedTabIndex = scope.tabs.indexOfFirst { it.key == selectedTabKey }
+    val selectedTabIndex = tabs.indexOfFirst { it.key == selectedTabKey }
     val currentSelectedTabIndex by rememberUpdatedState(selectedTabIndex)
     val reduceAnimation by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
@@ -782,7 +789,7 @@ private fun SharedTransitionScope.ExpandedTabs(
     val density = LocalDensity.current
     val layoutDirection = LocalLayoutDirection.current
     val isRtl = layoutDirection == LayoutDirection.Rtl
-    val tabCount = scope.tabs.size
+    val tabCount = tabs.size
     val tabSpacingPx = with(density) { sizes.tabSpacing.toPx() }
     val tabWidthPx = if (rowSize.width > 0 && tabCount > 0) {
         (rowSize.width - tabSpacingPx * (tabCount - 1)) / tabCount
@@ -908,18 +915,18 @@ private fun SharedTransitionScope.ExpandedTabs(
                                     if (!holding) return@detectHorizontalDragGestures
                                     holding = false
                                     val absoluteIndexFloat = (dragStartIndex + totalDrag / step)
-                                        .coerceIn(0f, scope.tabs.lastIndex.toFloat())
+                                        .coerceIn(0f, tabs.lastIndex.toFloat())
                                     val newIndex = absoluteIndexFloat.roundToInt()
                                     pill.release(newIndex)
                                     if (newIndex != currentSelectedTabIndex) {
-                                        scope.tabs[newIndex].onClick()
+                                        tabs[newIndex].onClick()
                                     }
                                 },
                                 onHorizontalDrag = { _, delta ->
                                     if (!holding) return@detectHorizontalDragGestures
                                     totalDrag += delta * direction
                                     val absoluteIndexFloat = (dragStartIndex + totalDrag / step)
-                                        .coerceIn(0f, scope.tabs.lastIndex.toFloat())
+                                        .coerceIn(0f, tabs.lastIndex.toFloat())
                                     pill.dragTo(absoluteIndexFloat)
 
                                     val approximateTab = absoluteIndexFloat.roundToInt()
@@ -931,7 +938,7 @@ private fun SharedTransitionScope.ExpandedTabs(
                             )
                         }
                 ) {
-                    scope.tabs.forEach { tab ->
+                    tabs.forEach { tab ->
                         val isSelected = tab.key == selectedTabKey
                         val iconScale by animateFloatAsState(
                             targetValue = if (isSelected) 1.08f else 1f,
@@ -1164,12 +1171,10 @@ private class FloatingTabBarScopeImpl : FloatingTabBarScope {
     val tabs = mutableStateListOf<FloatingTabBarTab>()
     var standaloneTab: FloatingTabBarTab? by mutableStateOf(null)
         private set
-    var inlineStandaloneTab: FloatingTabBarTab? by mutableStateOf(null)
-        private set
     private var inlineTab: FloatingTabBarTab? = null
 
     fun getInlineTab(selectedTabKey: Any?): FloatingTabBarTab? {
-        return if (selectedTabKey != (standaloneTab ?: inlineStandaloneTab)?.key) {
+        return if (selectedTabKey != standaloneTab?.key) {
             val selectedTab = tabs.find { it.key == selectedTabKey }
             if (selectedTab != null) {
                 inlineTab = selectedTab
@@ -1200,24 +1205,16 @@ private class FloatingTabBarScopeImpl : FloatingTabBarScope {
         )
     }
     
-    override fun inlineStandaloneTab(
-        key: Any,
-        icon: @Composable () -> Unit,
-        onClick: () -> Unit,
-        indication: (@Composable () -> Indication)?
-    ) {
-        inlineStandaloneTab = FloatingTabBarTab(key = key, title = {}, icon = icon, onClick = onClick, indication = indication)
-    }
-
     override fun standaloneTab(
         key: Any,
         icon: @Composable () -> Unit,
         onClick: () -> Unit,
-        indication: (@Composable () -> Indication)?
+        indication: (@Composable () -> Indication)?,
+        title: @Composable () -> Unit,
     ) {
         standaloneTab = FloatingTabBarTab(
             key = key,
-            title = {},
+            title = title,
             icon = icon,
             onClick = onClick,
             indication = indication

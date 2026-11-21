@@ -73,6 +73,7 @@ class SubsonicSource(
         limit: Int,
         waitForAll: Boolean,
         request: StreamRequest?,
+        target: TrackMatcher.Target?,
     ): List<Song> {
         val body = runCatching {
             request("search3", "query" to query, "songCount" to limit.toString(), "artistCount" to "0", "albumCount" to "0")

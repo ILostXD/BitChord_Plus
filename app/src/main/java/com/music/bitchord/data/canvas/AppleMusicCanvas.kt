@@ -96,6 +96,7 @@ object AppleMusicCanvas {
                     Log.d(TAG, "inline motion artwork for '$songName'")
                     return CanvasArtwork(
                         primary, alternate, songName, songArtist, albumName,
+                        source = CanvasSource.APPLE,
                         portraitUrl = tallUrl(video),
                     )
                 }
@@ -158,6 +159,7 @@ object AppleMusicCanvas {
                 album = name,
                 // The album page's full-screen header takes the 3:4 rendition, like the player.
                 portraitUrl = tallUrl(video),
+                source = CanvasSource.APPLE,
             )
         }
         return null
@@ -378,6 +380,7 @@ object AppleMusicCanvas {
             title = songTitle,
             artist = songArtist ?: attributes["artistName"]?.jsonPrimitive?.contentOrNull,
             album = albumName,
+            source = CanvasSource.APPLE,
             portraitUrl = tallUrl(video),
         )
     }

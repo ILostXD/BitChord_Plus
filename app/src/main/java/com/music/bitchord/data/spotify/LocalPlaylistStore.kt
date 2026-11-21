@@ -99,10 +99,16 @@ object LocalPlaylistStore {
         return true
     }
 
-    fun removeSong(id: String, song: Song) {
-        val playlist = getPlaylist(id) ?: return
-        val updated = _playlists.value.map {
-            if (it.id == playlist.id) it.copy(songs = it.songs.filterNot { s -> s.videoId == song.videoId }) else it
+    /**
+     * Takes one row of [song] out of the playlist at [browseId]. The first
+     * copy, when the playlist holds it twice: rows here carry no per-row id
+     * to say which copy was picked, and they play the same either way.
+     */
+    fun removeSong(browseId: String, song: Song) {
+        val updated = _playlists.value.map { playlist ->
+            if (playlist.browseId != browseId) return@map playlist
+            val index = playlist.songs.indexOfFirst { it.videoId == song.videoId }
+            if (index < 0) playlist else playlist.copy(songs = playlist.songs.filterIndexed { i, _ -> i != index })
         }
         _playlists.value = updated
         persist(updated)
