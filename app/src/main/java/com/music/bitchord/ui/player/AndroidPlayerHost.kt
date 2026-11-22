@@ -357,14 +357,42 @@ private class MusicStreamVolume(private val context: Context) : SystemVolume {
     private val _level = MutableStateFlow(read())
     override val level: StateFlow<Float> = _level.asStateFlow()
 
+    private val main = Handler(Looper.getMainLooper())
+
     init {
         context.contentResolver.registerContentObserver(
             Settings.System.CONTENT_URI,
             true,
-            object : ContentObserver(Handler(Looper.getMainLooper())) {
+            object : ContentObserver(main) {
                 override fun onChange(selfChange: Boolean) = refresh()
             },
         )
+        // Settings alone misses most changes on current Android: a car or headphones bringing
+        // their own volume when they connect, the volume panel, another app. The system's
+        // volume broadcast catches those...
+        androidx.core.content.ContextCompat.registerReceiver(
+            context,
+            object : android.content.BroadcastReceiver() {
+                override fun onReceive(c: Context?, intent: android.content.Intent?) = refresh()
+            },
+            android.content.IntentFilter("android.media.VOLUME_CHANGED_ACTION"),
+            androidx.core.content.ContextCompat.RECEIVER_EXPORTED,
+        )
+        // ...and an output change (Bluetooth, USB, wired) is read again once its volume has
+        // been applied, which comes a moment after the device appears.
+        manager?.registerAudioDeviceCallback(
+            object : android.media.AudioDeviceCallback() {
+                override fun onAudioDevicesAdded(added: Array<out android.media.AudioDeviceInfo>?) = settle()
+                override fun onAudioDevicesRemoved(removed: Array<out android.media.AudioDeviceInfo>?) = settle()
+            },
+            main,
+        )
+    }
+
+    private fun settle() {
+        refresh()
+        main.postDelayed(::refresh, 600)
+        main.postDelayed(::refresh, 2_000)
     }
 
     private fun max(): Int = manager?.getStreamMaxVolume(AudioManager.STREAM_MUSIC)?.coerceAtLeast(1) ?: 15

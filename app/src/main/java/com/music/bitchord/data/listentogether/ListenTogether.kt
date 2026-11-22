@@ -363,6 +363,17 @@ object ListenTogether {
     val customServerUrl: StateFlow<String> = _customServer.asStateFlow()
 
     /**
+     * The server to try before the built-in one: the one set in Listen Together, or else the
+     * music server's companion, which runs the same party server.
+     */
+    private fun configuredServer(): String = _customServer.value.ifBlank {
+        runCatching {
+            com.music.bitchord.data.sources.GlazeCompanion.server()?.companionUrl
+                ?.let { (parseAndNormalizeServerUrl(it) as? ServerUrlValidationResult.Valid)?.normalizedUrl }
+        }.getOrNull().orEmpty()
+    }
+
+    /**
      * The default party server this build ships pointed at, from `LISTEN_TOGETHER_SERVER`
      * in `local.properties` or build environment.
      */
@@ -406,7 +417,7 @@ object ListenTogether {
     /** Whether idle operations are currently falling back to the default server. */
     val isUsingDefaultFallback: Boolean
         get() {
-            val configured = _customServer.value
+            val configured = configuredServer()
             return configured.isNotBlank() &&
                 effectiveIdleServerBase() == defaultServer &&
                 configured != defaultServer
@@ -560,7 +571,7 @@ object ListenTogether {
             }
         }
 
-        val custom = _customServer.value
+        val custom = configuredServer()
         val (effectiveServer, state) = resolveServerConnection(
             customServer = custom,
             defaultServer = defaultServer,

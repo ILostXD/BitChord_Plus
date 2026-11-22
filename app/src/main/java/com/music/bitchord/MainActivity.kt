@@ -889,16 +889,19 @@ private fun BitChordApp(
     val homeState by viewModel.home.collectAsStateWithLifecycle()
     // Glaze's "Upcoming" shelf: albums due from starred artists, and Pre-Saves.
     val upcomingReleases by com.music.bitchord.data.sources.GlazeCompanion.upcoming.collectAsStateWithLifecycle()
-    val upcomingShelf = rememberUpcomingShelf(upcomingReleases)
+    val hideUpcoming by AppSettings.hideUpcoming.collectAsStateWithLifecycle()
+    // Its own slot between Top Picks and Recents, not a feed shelf: Recents only keeps its
+    // list layout as the feed's first shelf.
+    val upcomingShelf = rememberUpcomingShelf(upcomingReleases).takeUnless { hideUpcoming }
     val hideRecents by AppSettings.hideRecents.collectAsStateWithLifecycle()
     val hideHomeVideos by AppSettings.hideHomeVideos.collectAsStateWithLifecycle()
     val hideTopPicks by AppSettings.hideTopPicks.collectAsStateWithLifecycle()
     val hideHomeMoods by AppSettings.hideHomeMoods.collectAsStateWithLifecycle()
     // Only what Home draws: Top Picks reads the unfiltered feed from the view model.
-    val visibleHomeState = remember(homeState, hideHomeVideos, hideRecents, upcomingShelf) {
+    val visibleHomeState = remember(homeState, hideHomeVideos, hideRecents) {
         val loaded = homeState as? UiState.Success
-        if (loaded != null && (hideHomeVideos || hideRecents || upcomingShelf != null)) {
-            var shelves = listOfNotNull(upcomingShelf) + loaded.data
+        if (loaded != null && (hideHomeVideos || hideRecents)) {
+            var shelves = loaded.data
             if (hideRecents) shelves = shelves.filterNot { it.title == YtMusicRepository.RECENT_TITLE }
             if (hideHomeVideos) shelves = shelves.withoutVideos()
             UiState.Success(shelves)
@@ -1201,7 +1204,7 @@ private fun BitChordApp(
             ) null else {
                 {
                     val artist = albumArtistOf(subtitle) ?: songs.firstOrNull()?.artist.orEmpty()
-                    viewModel.downloadToServer(browseId, artist, title)
+                    viewModel.downloadToServer(browseId, artist, title, cover = songs.firstOrNull()?.thumbnailUrl)
                     showQueueNotice(context.getString(R.string.server_download_sent, title))
                 }
             }
@@ -3648,6 +3651,7 @@ private fun BitChordApp(
                                 recentlyPlayedLoading = homeRecentlyPlayedLoading && !hideRecents,
                                 topPicks = topPicks,
                                 topPicksLoading = topPicksLoading,
+                                upcoming = upcomingShelf,
                                 listenerName = account?.name,
                                 // Neither shelf is drawn without its callback.
                                 onTopPickClick = openTopPick.takeUnless { hideTopPicks },
@@ -4741,7 +4745,12 @@ private fun BitChordApp(
             }
             // Only for a song the server doesn't have yet.
             val onServer by produceState<Boolean?>(null, song.videoId, companionServer?.id) {
-                value = companionServer?.let { runCatching { ServerLibrary.trackIdOn(it.id, song) }.getOrNull() != null }
+                value = companionServer?.let { server ->
+                    // Playing from the server right now (the resolver picked its copy), or found in its library.
+                    com.music.bitchord.playback.StreamChoice.of(song.videoId)?.sourceConfigId == server.id ||
+                        com.music.bitchord.data.NerdStats.exactSourceFor(song.videoId) == server.displayName ||
+                        runCatching { ServerLibrary.trackIdOn(server.id, song) }.getOrNull() != null
+                }
             }
             SongActionsMenu(
                 song = song,
@@ -4773,7 +4782,7 @@ private fun BitChordApp(
                         {
                             songActions = null
                             viewModel.downloadToServer(
-                                "song:${song.videoId}", song.artist, song.title, kind = "track", album = song.albumName,
+                                "song:${song.videoId}", song.artist, song.title, kind = "track", album = song.albumName, albumId = song.albumId, cover = song.thumbnailUrl,
                             )
                             showQueueNotice(context.getString(R.string.server_download_sent, song.title))
                         }
@@ -6893,7 +6902,8 @@ private fun NavidromeBackgroundWork(
     LaunchedEffect(playlistCount) { if (playlistCount > 0) viewModel.syncPlaylistsToServer(force = true) }
     val libraryArtistNames = remember(libraryState) {
         (libraryState as? UiState.Success)?.data?.shelves.orEmpty()
-            .filter { it.title == "Artists" || it.title == "Subscriptions" }
+            // Followed artists only: the Artists shelf also lists everyone a saved song is by.
+            .filter { it.title == "Subscriptions" }
             .flatMap { shelf -> shelf.items.map { it.title } }
     }
     LaunchedEffect(companionId, libraryArtistNames) {

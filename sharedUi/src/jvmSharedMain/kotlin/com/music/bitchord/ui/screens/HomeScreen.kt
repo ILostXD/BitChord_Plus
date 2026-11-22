@@ -142,6 +142,8 @@ fun HomeScreen(
      */
     topPicks: List<TopPick>? = null,
     topPicksLoading: Boolean = false,
+    /** Upcoming releases, drawn between Top Picks and the feed (so Recents stays first there). */
+    upcoming: HomeShelf? = null,
     /** The signed-in account's name, for the personal station's "Name's Station". */
     listenerName: String? = null,
     onTopPickClick: ((TopPick, String) -> Unit)? = null,
@@ -210,6 +212,17 @@ fun HomeScreen(
                         )
                     }
                     topPicks == null && topPicksLoading -> topPicksSkeleton()
+                }
+            }
+            if (upcoming != null && state is UiState.Success) {
+                item(key = "upcoming") {
+                    Shelf(
+                        shelf = upcoming,
+                        onItemClick = { item -> onItemClick(item, upcoming.title) },
+                        onItemLongPress = onItemLongPress,
+                        currentSong = currentSong,
+                        isPlaying = isPlaying,
+                    )
                 }
             }
             when (state) {

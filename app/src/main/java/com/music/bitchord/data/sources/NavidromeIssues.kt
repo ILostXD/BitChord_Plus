@@ -51,8 +51,15 @@ object NavidromeIssues {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val seen = prefs.getStringSet(SEEN, emptySet()).orEmpty().toMutableSet()
         val first = !prefs.getBoolean(STARTED, false)
-        val newest = jobs.sortedByDescending { it.updatedAt }.distinctBy { "${it.artist}|${it.title}|${it.kind}".lowercase() }
-        val issues = newest.filter { it.job.review || it.job.failed }
+        val newest = jobs.sortedByDescending { it.createdAt }.distinctBy { "${it.artist}|${it.title}|${it.kind}".lowercase() }
+        // The optional lossy fallback: songs with no lossless copy come from JioSaavn instead,
+        // and those that do aren't reported as failures.
+        val filled = if (com.music.bitchord.data.settings.AppSettings.serverLossyFallback.value) {
+            newest.filter { it.job.failed }.filter { GlazeCompanion.fillFromJioSaavn(server, it) }.map { it.job.id }.toSet()
+        } else {
+            emptySet()
+        }
+        val issues = newest.filter { (it.job.review || it.job.failed) && it.job.id !in filled }
         val fresh = issues.filter { "${it.job.id}:${it.job.status}" !in seen }
         issues.forEach { seen += "${it.job.id}:${it.job.status}" }
         // Keep the memory bounded: only what the companion still lists.

@@ -37,8 +37,12 @@ object GlazeCompanion {
         /** Waiting for the user: the library has something close, and the companion asks before adding more. */
         val review get() = status == "needs_review" && error == "library_review"
         val failed get() = status == "failed" || (status == "needs_review" && !review)
-        val active get() = !finished && !failed && !review
+        /** Still being worked on. A cancelled job is none of these, and the dashboard leaves it out. */
+        val active get() = status == "searching" || status == "downloading" || status == "importing" || status == "moved"
     }
+
+    /** YouTube's auto-generated channels are "<Artist> - Topic"; the suffix is not part of the artist. */
+    fun cleanArtist(artist: String) = artist.replace(Regex("""\s*-\s*Topic\s*$""", RegexOption.IGNORE_CASE), "").trim()
 
     /** A job as the companion lists it: what was asked for, and how it went. */
     data class JobInfo(
@@ -50,6 +54,10 @@ object GlazeCompanion {
         val canApprove: Boolean = false,
         /** ISO time of the last change, for ordering. */
         val updatedAt: String = "",
+        /** Artwork: sent with the request, or found by the companion. */
+        val cover: String? = null,
+        /** ISO time the request was made: of several attempts at one request, the newest counts. */
+        val createdAt: String = "",
     )
 
     /** The first music server with a companion address set in Sources. */
@@ -63,16 +71,123 @@ object GlazeCompanion {
         kind: String = "album",
         album: String? = null,
         durationSec: Int = 0,
+        /** The album's own artist: a song not shared on its own is then looked for in its album. */
+        albumArtist: String? = null,
+        /** Artwork for the dashboards. */
+        cover: String? = null,
     ): Job =
         call(server, "/api/v1/acquisition/jobs", buildJsonObject {
-            put("artist", artist)
+            put("artist", cleanArtist(artist))
             put("title", title)
             put("kind", kind)
             // Lets the companion tell this cut of a song from the one the library has.
             if (durationSec > 0) put("duration_sec", durationSec)
             // A track keeps the release it was picked from, so the right edition is fetched.
             if (kind == "track" && !album.isNullOrBlank()) put("album", album)
+            if (kind == "track" && !albumArtist.isNullOrBlank()) put("album_artist", albumArtist)
+            if (!cover.isNullOrBlank() && cover.startsWith("https://")) put("cover", cover)
         }).toJob()
+
+    private val albumArtists = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    /**
+     * The artist an album is filed under, read off its YouTube Music page ("Album • Offset • 2026"),
+     * not the song's own credits; null when the page can't be read.
+     */
+    suspend fun albumArtist(albumId: String?): String? {
+        if (albumId.isNullOrBlank() || !albumId.startsWith("MPRE")) return null
+        albumArtists[albumId]?.let { return it }
+        val subtitle = com.music.bitchord.data.YtMusicRepository.browseSongs(albumId).getOrNull()?.header?.subtitle ?: return null
+        return com.music.bitchord.albumArtistOf(subtitle)?.also { albumArtists[albumId] = it }
+    }
+
+    /** Asks the companion to re-check failures against the library and retry the newest ones still missing. */
+    suspend fun refresh(server: SourceConfig) {
+        send(server, "/api/v1/acquisition/refresh", buildJsonObject { }, "POST")
+    }
+
+    /** Deletes entries from the dashboards ([hidden] true), or restores them. Running jobs are left alone. */
+    suspend fun setHidden(server: SourceConfig, ids: Collection<String>, hidden: Boolean) {
+        send(server, "/api/v1/acquisition/jobs/hidden", buildJsonObject {
+            put("ids", kotlinx.serialization.json.JsonArray(ids.map { JsonPrimitive(it) }))
+            put("hidden", hidden)
+        }, "POST")
+    }
+
+    /** Requests already handed to [fillFromJioSaavn] this run, so none is tried twice. */
+    private val lossyTried = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>())
+
+    /**
+     * The optional lossy fallback (Settings, off by default): a song the companion found no
+     * lossless copy of is added from JioSaavn instead. The app finds the matching song there
+     * and hands the companion its stream; the companion downloads, tags and files it.
+     * True when it was added.
+     */
+    suspend fun fillFromJioSaavn(server: SourceConfig, info: JobInfo): Boolean {
+        if (info.job.error != "no_suitable_slskd_match" || !lossyTried.add(info.job.id)) return false
+        if (info.kind == "album") return fillAlbumFromJioSaavn(server, info)
+        return runCatching {
+            val saavn = JioSaavnSource(SourceConfig(kind = SourceKind.JIOSAAVN))
+            val artist = cleanArtist(info.artist)
+            val target = TrackMatcher.Target(title = info.title, artist = artist, album = info.album.ifBlank { null })
+            val match = TrackMatcher.best(saavn.search("${info.title} $artist", 10, false, null, target), target) ?: return false
+            val trackId = SourceRegistry.parseTrackKey(match.videoId)?.second ?: return false
+            val stream = saavn.stream(trackId, StreamRequest.Best) ?: return false
+            send(server, "/api/v1/acquisition/jobs/${info.job.id}/lossy", buildJsonObject {
+                put("url", stream.url)
+                put("ext", "m4a")
+                match.albumName?.let { put("album", it) }
+            }, "POST")
+            true
+        }.getOrDefault(false)
+    }
+
+    /** The album version: JioSaavn's copy of the album, sent one song at a time in order. */
+    private suspend fun fillAlbumFromJioSaavn(server: SourceConfig, info: JobInfo): Boolean = runCatching {
+        val songs = com.music.bitchord.data.jiosaavn.JioSaavnService.albumSongs(info.title, cleanArtist(info.artist))
+        if (songs.isEmpty()) return false
+        // Streams first, so the call marked "last" is one that is really sent.
+        val ready = songs.mapIndexedNotNull { index, song ->
+            com.music.bitchord.data.jiosaavn.JioSaavnService.getStreamUrl(song.id)?.let { Triple(index, song, it) }
+        }
+        var added = false
+        ready.forEachIndexed { position, (index, song, stream) ->
+            val sent = runCatching {
+                send(server, "/api/v1/acquisition/jobs/${info.job.id}/lossy", buildJsonObject {
+                    put("url", stream.url)
+                    put("ext", "m4a")
+                    put("title", song.title)
+                    put("artist", song.moreInfo.artistMap.primaryArtists.joinToString(", ") { it.name }.ifBlank { cleanArtist(info.artist) })
+                    put("track", index + 1)
+                    put("last", position == ready.lastIndex)
+                }, "POST")
+            }
+            added = added || sent.isSuccess
+        }
+        added
+    }.getOrDefault(false)
+
+    /**
+     * The companion's handling of singles: [replaceSingles] moves an album's songs that the library
+     * has as singles out when the album arrives (playlists then point at the album's tracks);
+     * [albumFromSingles] asks for the whole album once "any", "half" or "all" of its singles are in.
+     */
+    data class SinglesSettings(val replaceSingles: Boolean = false, val albumFromSingles: String = "off")
+
+    suspend fun singlesSettings(server: SourceConfig): SinglesSettings? = runCatching {
+        val json = send(server, "/api/v1/acquisition/jobs/settings", null, "GET") as JsonObject
+        SinglesSettings(
+            (json["replace_singles"] as? JsonPrimitive)?.booleanOrNull == true,
+            json.text("album_from_singles") ?: "off",
+        )
+    }.getOrNull()
+
+    suspend fun setSinglesSettings(server: SourceConfig, settings: SinglesSettings) {
+        send(server, "/api/v1/acquisition/jobs/settings", buildJsonObject {
+            put("replace_singles", settings.replaceSingles)
+            put("album_from_singles", settings.albumFromSingles)
+        }, "POST")
+    }
 
     /** Retries a failed job with its original request. */
     suspend fun retry(server: SourceConfig, jobId: String): Job =
@@ -106,7 +221,13 @@ object GlazeCompanion {
         val tracks: List<ReleaseTrack> = emptyList(),
     )
 
-    data class ReleaseTrack(val id: String, val title: String, val artist: String, val durationSec: Int?, val released: Boolean)
+    data class ReleaseTrack(val id: String, val title: String, val artist: String, val durationSec: Int?, val released: Boolean) {
+        /**
+         * Worth looking for on YouTube Music: out by Apple's reckoning, or a named song that may
+         * already be out elsewhere (a reissue's original disc, a single). "Track 3" placeholders aren't.
+         */
+        val findable get() = released || !title.matches(Regex("""(?i)track\s*\d+"""))
+    }
 
     /** The page id an upcoming release opens under. */
     const val RELEASE_PREFIX = "release:"
@@ -115,7 +236,7 @@ object GlazeCompanion {
     val upcoming = kotlinx.coroutines.flow.MutableStateFlow<List<Release>>(emptyList())
 
     /**
-     * The artists in the YouTube Music library (its Artists and Subscriptions shelves).
+     * The artists followed in YouTube Music (its library's Subscriptions shelf).
      * Those that are also on the music server have their upcoming albums listed too,
      * without having to be starred there first.
      */
@@ -158,6 +279,15 @@ object GlazeCompanion {
     }
 
     /** Upcoming albums by the server's starred artists, plus everything Pre-Saved. */
+    /** Releases found for artist pages, by id: their pages' countdowns read them too. */
+    val pageReleases = java.util.concurrent.ConcurrentHashMap<String, Release>()
+
+    /** The upcoming albums of the artist called [name], whether the server has them or not. */
+    suspend fun releasesByName(server: SourceConfig, name: String): List<Release> =
+        (send(server, "/api/v1/releases?artist_name=" + java.net.URLEncoder.encode(name, "UTF-8"), null, "GET") as? JsonArray)
+            .orEmpty().mapNotNull { (it as? JsonObject)?.toRelease() }
+            .onEach { pageReleases[it.id] = it }
+
     suspend fun releases(server: SourceConfig, artistId: String? = null): List<Release> =
         (send(server, "/api/v1/releases" + (artistId?.let { "?artist_id=" + java.net.URLEncoder.encode(it, "UTF-8") } ?: ""), null, "GET") as? JsonArray)
             .orEmpty().mapNotNull { (it as? JsonObject)?.toRelease() }
@@ -218,6 +348,8 @@ object GlazeCompanion {
                         it.toJob(), it.text("Artist").orEmpty(), it.text("Title").orEmpty(), it.text("Kind").orEmpty(),
                         it.text("AlbumTitle").orEmpty(), (it["CanApproveMetadata"] as? JsonPrimitive)?.booleanOrNull == true,
                         it.text("UpdatedAt").orEmpty(),
+                        it.text("Cover")?.takeIf { c -> c.isNotBlank() },
+                        it.text("CreatedAt").orEmpty(),
                     )
                 }.getOrNull()
             }

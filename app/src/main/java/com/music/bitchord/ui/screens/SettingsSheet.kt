@@ -313,6 +313,7 @@ fun SettingsScreen(
     val preferMusicOnly by AppSettings.preferMusicOnly.collectAsStateWithLifecycle()
     val squareVideoThumbnails by AppSettings.squareVideoThumbnails.collectAsStateWithLifecycle()
     val hideRecents by AppSettings.hideRecents.collectAsStateWithLifecycle()
+    val hideUpcoming by AppSettings.hideUpcoming.collectAsStateWithLifecycle()
     val hideHomeVideos by AppSettings.hideHomeVideos.collectAsStateWithLifecycle()
     val hideTopPicks by AppSettings.hideTopPicks.collectAsStateWithLifecycle()
     val hideHomeMoods by AppSettings.hideHomeMoods.collectAsStateWithLifecycle()
@@ -1075,6 +1076,20 @@ fun SettingsScreen(
                         )
                     },
                     onClick = { AppSettings.setHideRecents(!hideRecents) },
+                )
+            }
+            val hideUpcomingTitle = stringResource(R.string.hide_upcoming)
+            row(hideUpcomingTitle, "upcoming", "release", "pre-save", "presave", "feed", "home") {
+                SettingsRow(
+                    icon = SfIcons.VisibilityOff,
+                    title = hideUpcomingTitle,
+                    trailing = {
+                        IosSwitch(
+                            checked = hideUpcoming,
+                            onCheckedChange = AppSettings::setHideUpcoming,
+                        )
+                    },
+                    onClick = { AppSettings.setHideUpcoming(!hideUpcoming) },
                 )
             }
             val hideHomeVideosTitle = stringResource(R.string.hide_home_videos)

@@ -206,6 +206,48 @@ object JioSaavnService {
         emptyList()
     }
 
+    /**
+     * The songs of the album called [title] by [artist], in order; empty when JioSaavn has no
+     * album with that title whose credit names the artist.
+     */
+    suspend fun albumSongs(title: String, artist: String): List<RawSongItem> = runCatching {
+        fun key(s: String) = s.lowercase().replace(Regex("""\s*[(\[][^)\]]*[)\]]"""), "").replace(Regex("""[^\p{L}\p{N}]+"""), " ").trim()
+        val search = json.parseToJsonElement(
+            client.get("") {
+                parameter("__call", "search.getAlbumResults")
+                parameter("_format", "json")
+                parameter("_marker", "0")
+                parameter("api_version", "4")
+                parameter("ctx", "android")
+                parameter("q", "$title $artist")
+                parameter("p", "1")
+                parameter("n", "10")
+            }.bodyAsText(),
+        ) as? JsonObject ?: return@runCatching emptyList()
+        val lead = key(artist.split(",", "&").first())
+        val albumId = (search["results"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }.firstOrNull { album ->
+            val name = (album["title"] as? kotlinx.serialization.json.JsonPrimitive)?.content.orEmpty()
+            val credit = (album["subtitle"] as? kotlinx.serialization.json.JsonPrimitive)?.content.orEmpty()
+            key(name) == key(title) && key(credit).contains(lead)
+        }?.let { (it["id"] as? kotlinx.serialization.json.JsonPrimitive)?.content } ?: return@runCatching emptyList()
+        val details = json.parseToJsonElement(
+            client.get("") {
+                parameter("__call", "content.getAlbumDetails")
+                parameter("_format", "json")
+                parameter("_marker", "0")
+                parameter("api_version", "4")
+                parameter("ctx", "android")
+                parameter("albumid", albumId)
+            }.bodyAsText(),
+        ) as? JsonObject ?: return@runCatching emptyList()
+        (details["list"] as? JsonArray).orEmpty().mapNotNull { song ->
+            runCatching { json.decodeFromJsonElement(RawSongItem.serializer(), song) }.getOrNull()
+        }
+    }.getOrElse {
+        TrackLog.w(TAG, "Saavn album lookup error: ${it.message}")
+        emptyList()
+    }
+
     suspend fun getStreamUrl(saavnSongId: String): SaavnStream? {
         val result = runCatching {
             val response = client.get("") {

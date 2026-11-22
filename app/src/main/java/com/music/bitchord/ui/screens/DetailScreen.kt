@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -135,6 +136,8 @@ import coil3.request.ImageRequest
 import coil3.request.transformations
 import androidx.compose.runtime.mutableIntStateOf
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
@@ -199,9 +202,9 @@ import com.music.bitchord.ui.components.LIBRARY_GRID_SPACING
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
 import com.music.bitchord.ui.components.BAR_GUTTER
-import com.music.bitchord.ui.components.NUMBERED_ROW_DIVIDER_INSET
 import com.music.bitchord.ui.components.RowMoreButton
 import com.music.bitchord.ui.components.ROW_DIVIDER_INSET
+import com.music.bitchord.ui.components.NUMBERED_ROW_DIVIDER_INSET
 import com.music.bitchord.ui.components.SHELF_CARD_WIDTH
 import com.music.bitchord.ui.components.SongRow
 import com.music.bitchord.ui.components.SearchPlayingBars
@@ -441,7 +444,63 @@ fun DetailScreen(
     val isArtist = page.type == BrowseType.ARTIST
     // Whether the top release card's album is already saved isn't on the shelf
     // item; it is read off the album once, as soon as the card is known.
-    val topReleaseId = if (isArtist) page.sections.topRelease()?.browseId else null
+    // The page's own pick (newest year) shows at once; the newest release to the day, joint ones
+    // included, replaces it when it's found (see [NewestRelease]), and the page's pick stays if not.
+    val topReleaseState = produceState(if (isArtist) page.sections.topRelease() else null, isArtist, page.sections) {
+        if (!isArtist) return@produceState
+        value = page.sections.topRelease()
+        if (page.sections.isEmpty()) return@produceState
+        // Deezer files joint releases (Offset & Quavo) under their own artist, so its newest can be
+        // older than the page's; it only ever replaces the page's pick with one from the same year or later.
+        val pageYear = page.sections.topRelease()?.releaseYear() ?: 0
+        com.music.bitchord.data.canvas.NewestRelease.find(page.title, page.sections.flatMap { it.items })
+            ?.takeIf { (it.releaseYear() ?: 0) >= pageYear }?.let { value = it }
+    }
+    // An album the companion knows is coming from this artist takes the card's place.
+    val upcoming by com.music.bitchord.data.sources.GlazeCompanion.upcoming.collectAsStateWithLifecycle()
+    // Asked of the companion for this artist by name: works for anyone, followed or not.
+    val announced by produceState(emptyList<com.music.bitchord.data.sources.GlazeCompanion.Release>(), page.title, isArtist) {
+        val server = com.music.bitchord.data.sources.GlazeCompanion.server()
+        if (isArtist && server != null) {
+            value = runCatching { com.music.bitchord.data.sources.GlazeCompanion.releasesByName(server, page.title) }.getOrDefault(emptyList())
+        }
+    }
+    val nextRelease = remember(upcoming, announced, page.title, isArtist) {
+        if (!isArtist) return@remember null
+        val name = page.title.trim().lowercase()
+        val today = java.time.LocalDate.now().toString()
+        (upcoming + announced).filter { it.releaseDate.take(10) >= today }.filter { release ->
+            release.artist.lowercase().split(",", "&", " feat. ", " x ").any { it.trim() == name }
+        }.minByOrNull { it.releaseDate }
+    }
+    // The card's + Pre-Saves it, as the release page's own + does; flipped at once, then confirmed.
+    var nextSaved by remember(nextRelease?.id) { mutableStateOf(nextRelease?.saved) }
+    val presaveScope = rememberCoroutineScope()
+    val toggleNextSaved: (() -> Unit)? = nextRelease?.let { release ->
+        com.music.bitchord.data.sources.GlazeCompanion.server()?.let { server ->
+            {
+                val want = nextSaved != true
+                nextSaved = want
+                presaveScope.launch {
+                    val result = runCatching { com.music.bitchord.data.sources.GlazeCompanion.setPreSaved(server, release.id, want) }.getOrNull()
+                    if (result == null) nextSaved = !want else com.music.bitchord.data.sources.GlazeCompanion.updated(result)
+                }
+            }
+        }
+    }
+    val upcomingRelease = remember(nextRelease) {
+        nextRelease?.let { release ->
+            ShelfItem(
+                title = release.title,
+                subtitle = "Album • " + com.music.bitchord.readableReleaseDay(release.releaseDate),
+                thumbnailUrl = release.cover,
+                videoId = null,
+                browseId = com.music.bitchord.data.sources.GlazeCompanion.RELEASE_PREFIX + release.id,
+            )
+        }
+    }
+    val topRelease = topReleaseState.value
+    val topReleaseId = topRelease?.browseId
     LaunchedEffect(topReleaseId) { topReleaseId?.let { onLoadReleaseLibrary?.invoke(it) } }
     // Apple Music's hero photo and title logo for this artist, found by name and
     // confirmed by a shared title in both catalogues — so it waits for the
@@ -778,9 +837,21 @@ fun DetailScreen(
                 }
             }
 
-            // The first release on the shelves below, pulled out as a card of its own.
-            val topRelease = if (isArtist) page.sections.topRelease() else null
-            if (topRelease != null) {
+            // The artist's next album when one is announced, otherwise their newest release of
+            // any kind (album, EP or single), pulled out as a card of its own.
+            if (isArtist && upcomingRelease != null) {
+                item(key = "top-release") {
+                    TopReleaseCard(
+                        item = upcomingRelease,
+                        palette = palette,
+                        onClick = { onSectionItemClick(upcomingRelease) },
+                        onLongPress = null,
+                        saved = nextSaved,
+                        onToggleSaved = toggleNextSaved,
+                        label = stringResource(R.string.upcoming_album),
+                    )
+                }
+            } else if (topRelease != null) {
                 item(key = "top-release") {
                     TopReleaseCard(
                         item = topRelease,
@@ -855,6 +926,7 @@ fun DetailScreen(
                 item(key = "release-countdown") {
                     val upcoming by com.music.bitchord.data.sources.GlazeCompanion.upcoming.collectAsStateWithLifecycle()
                     val release = upcoming.firstOrNull { "release:${it.id}" == page.browseId }
+                        ?: com.music.bitchord.data.sources.GlazeCompanion.pageReleases[page.browseId.removePrefix("release:")]
                     if (release != null) ReleaseCountdown(release, palette)
                 }
             }
@@ -2426,6 +2498,8 @@ private fun TopReleaseCard(
     saved: Boolean?,
     /** Null hides the button. */
     onToggleSaved: (() -> Unit)?,
+    /** The line under the title; "Recent Album/EP/Single" when null. */
+    label: String? = null,
 ) {
     val shape = remember { RoundedCornerShape(TOP_RELEASE_CORNER).continuous() }
     // Concentric with the panel: its corner less the inset the sleeve sits at.
@@ -2486,7 +2560,7 @@ private fun TopReleaseCard(
                 maxLines = 2,
             )
             Text(
-                text = stringResource(item.recentLabel()),
+                text = label ?: stringResource(item.recentLabel()),
                 style = MaterialTheme.typography.bodyMedium,
                 color = secondary,
                 maxLines = 1,
@@ -2961,13 +3035,23 @@ private fun ReleaseCountdown(release: com.music.bitchord.data.sources.GlazeCompa
                 color = palette.onBackground,
             )
         } else {
-            Row(horizontalArrangement = Arrangement.spacedBy(22.dp)) {
+            // Units split by hairlines the height of the digits and their labels.
+            Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 listOf(
                     left / 86_400 to R.string.countdown_days,
                     left % 86_400 / 3_600 to R.string.countdown_hours,
                     left % 3_600 / 60 to R.string.countdown_minutes,
                     left % 60 to R.string.countdown_seconds,
-                ).forEach { (value, label) ->
+                ).forEachIndexed { index, (value, label) ->
+                    if (index > 0) {
+                        Box(
+                            Modifier
+                                .padding(vertical = 4.dp)
+                                .width(1.dp)
+                                .fillMaxHeight()
+                                .background(palette.onBackground.copy(alpha = 0.22f)),
+                        )
+                    }
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
                             "%02d".format(value),
@@ -3038,7 +3122,10 @@ private suspend fun albumSourceQuality(songs: List<Song>): SourceQuality? {
         for (song in sample) {
             val target = com.music.bitchord.data.sources.TrackMatcher.targetOf(song)
             val found = runCatching {
-                source.search("${song.title} ${song.artist}", 5, false, null, target)
+                // Plain title and lead artist: a server's search wants every word, and "(feat. …)" or a
+                // second credit rarely matches its tags word for word.
+                val title = song.title.replace(Regex("""\s*[(\[][^)\]]*[)\]]"""), "").trim().ifEmpty { song.title }
+                source.search("$title ${song.artist.split(",", " & ").first().trim()}", 5, false, null, target)
             }.getOrNull().orEmpty()
             val quality = com.music.bitchord.data.sources.TrackMatcher.best(found, target)?.sourceQualityBadge() ?: continue
             if ((rank[quality] ?: 0) > (rank[best] ?: 0)) best = quality

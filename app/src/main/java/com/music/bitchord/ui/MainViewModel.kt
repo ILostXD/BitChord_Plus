@@ -1613,6 +1613,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         kind: String = "album",
         album: String? = null,
         durationSec: Int = 0,
+        /** For a song: its album's id, so the companion can look in that album if the song isn't shared alone. */
+        albumId: String? = null,
+        cover: String? = null,
         onFinished: suspend () -> Unit = {},
     ) {
         val server = com.music.bitchord.data.sources.GlazeCompanion.server() ?: return
@@ -1625,7 +1628,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (previous?.failed == true && previous.id.isNotEmpty()) {
                     com.music.bitchord.data.sources.GlazeCompanion.retry(server, previous.id)
                 } else {
-                    com.music.bitchord.data.sources.GlazeCompanion.submit(server, artist, title, kind, album, durationSec)
+                    com.music.bitchord.data.sources.GlazeCompanion.submit(
+                        server, artist, title, kind, album, durationSec,
+                        com.music.bitchord.data.sources.GlazeCompanion.albumArtist(albumId),
+                        cover,
+                    )
                 }
             }.getOrElse { com.music.bitchord.data.sources.GlazeCompanion.Job("", "failed", it.message) }
             _serverDownloads.value += key to job
@@ -1705,18 +1712,22 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     // Missing: one request per song, or per album, however many playlists share it.
                     val album = song.albumName?.takeIf { it.isNotBlank() }
                     val byAlbum = mode == com.music.bitchord.data.settings.ServerAutoDownload.ALBUM && album != null
-                    val key = if (byAlbum) "album:${song.artist}:$album" else "song:${song.artist}:${song.title}"
+                    val key = if (byAlbum) "album:${song.albumId ?: song.artist}:$album" else "song:${song.artist}:${song.title}"
                     if (!requested.add(key.lowercase())) continue
                     // Remembered across starts: a request the companion has seen in the last
                     // few days is not sent again, whatever came of it. At most a few dozen
                     // new ones per pass, and none once the companion says its queue is full.
                     if (recentlyRequested(key) || asked >= MAX_REQUESTS_PER_SYNC) continue
+                    // The album's own artist, as its page files it: what uploaders name folders by.
+                    val albumArtist = com.music.bitchord.data.sources.GlazeCompanion.albumArtist(song.albumId)
                     val sent = runCatching {
                         if (byAlbum) {
-                            com.music.bitchord.data.sources.GlazeCompanion.submit(companion, song.artist, album!!)
+                            // Without the album artist an album request would search the wrong name.
+                            com.music.bitchord.data.sources.GlazeCompanion.submit(companion, albumArtist ?: song.artist, album!!, cover = song.thumbnailUrl)
                         } else {
                             com.music.bitchord.data.sources.GlazeCompanion.submit(
-                                companion, song.artist, song.title, "track", album, (song.durationMillis() / 1000).toInt(),
+                                companion, song.artist, song.title, "track", album, (song.durationMillis() / 1000).toInt(), albumArtist,
+                                song.thumbnailUrl,
                             )
                         }
                     }
@@ -3412,6 +3423,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val release = com.music.bitchord.data.sources.GlazeCompanion.server()?.let { server ->
                 runCatching { com.music.bitchord.data.sources.GlazeCompanion.release(server, id) }.getOrNull()
             }
+            // The artist's YouTube Music page, so the header's name opens it like on any album.
+            if (release != null && !releaseArtistIds.containsKey(release.artist)) {
+                YtMusicRepository.findArtistPageId(release.artist).getOrNull()?.let { releaseArtistIds[release.artist] = it }
+            }
             _detailStack.value = _detailStack.value.map { page ->
                 if (page.browseId != browseId) page
                 else if (release == null) page.copy(songs = UiState.Error(text(R.string.failed)))
@@ -3425,9 +3440,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     library = LibraryState(browseId, release.saved),
                 )
             }
-            if (release != null && release.tracks.any { it.released }) resolveReleasedTracks(browseId, release)
+            if (release != null && release.tracks.any { it.findable }) resolveReleasedTracks(browseId, release)
         }
     }
+
+    /** Release artist name → their YouTube Music page. */
+    private val releaseArtistIds = java.util.concurrent.ConcurrentHashMap<String, String>()
 
     private fun releaseTrackRow(
         release: com.music.bitchord.data.sources.GlazeCompanion.Release,
@@ -3436,13 +3454,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         videoId = com.music.bitchord.data.model.SPOTIFY_MISSING_PREFIX + "release-" + track.id,
         title = track.title,
         artist = track.artist,
+        artistId = releaseArtistIds[release.artist],
         albumName = release.title,
         thumbnailUrl = release.cover,
         durationText = track.durationSec?.let { "%d:%02d".format(it / 60, it % 60) },
     )
 
     /**
-     * An album that is only partly out: the tracks that are can already be played from YouTube
+     * An album that is only partly out: the tracks that are (Apple's "released", or a song that
+     * was already out elsewhere, like a reissue's original disc) can already be played from YouTube
      * Music. Each released one is looked up there and, when it matches, replaces its row.
      */
     private suspend fun resolveReleasedTracks(
@@ -3451,7 +3471,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     ) {
         val gate = kotlinx.coroutines.sync.Semaphore(4)
         val found: Map<String, Song?> = coroutineScope {
-            release.tracks.filter { it.released }.map { track ->
+            release.tracks.filter { it.findable }.map { track ->
                 async<Pair<String, Song?>> {
                     gate.withPermit {
                         val candidates = YtMusicRepository.search("${track.title} ${track.artist}", SearchFilter.SONGS)
