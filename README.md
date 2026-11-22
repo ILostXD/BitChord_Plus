@@ -29,7 +29,7 @@
 
 <div align="center">
 
-<img src="Banner.png" alt="BitChord+: Requests, Pre-Save, album pages and the audio pipeline" width="100%" />
+<img src="Banner.png" alt="BitChord+: Requests, an artist's upcoming album, Pre-Save and an album from your server" width="100%" />
 
 <h1><a id="whats-new"></a>What's new in BitChord+</h1>
 
@@ -42,7 +42,7 @@ Everything [BitChord](https://github.com/kushagrasinghx/BitChord) does, plus you
     <td width="33%" align="center" valign="top">
       <img src="docs/screenshots/requests.jpg" alt="Requests" width="240" /><br/><br/>
       <b>Requests</b><br/>
-      <sub>Ask for any song or album and it lands in your library: lossless only, with artwork, status, retry, swipe to delete and undo.</sub>
+      <sub>Ask for any song or album and it lands in your library, lossless only. Artwork, status, retry, swipe to delete with undo, and the companion's settings in one place.</sub>
     </td>
     <td width="33%" align="center" valign="top">
       <img src="docs/screenshots/presave.jpg" alt="Pre-Save" width="240" /><br/><br/>
@@ -52,14 +52,14 @@ Everything [BitChord](https://github.com/kushagrasinghx/BitChord) does, plus you
     <td width="33%" align="center" valign="top">
       <img src="docs/screenshots/album.jpg" alt="Album page" width="240" /><br/><br/>
       <b>Apple Music-style pages</b><br/>
-      <sub>Album pages with genre, year and the real quality your sources have (Lossless, Hi-Res Lossless), disc sections and full-screen covers.</sub>
+      <sub>Genre, year and the real quality your server has (Lossless, Hi-Res Lossless), disc sections and full-screen covers. Your server plays up to 24-bit FLAC next to YouTube Music.</sub>
     </td>
   </tr>
   <tr>
     <td width="33%" align="center" valign="top">
-      <img src="docs/screenshots/pipeline.jpg" alt="Your server as a source" width="240" /><br/><br/>
-      <b>Your server as a source</b><br/>
-      <sub>Navidrome and other Subsonic servers play in up to 24-bit FLAC, right next to YouTube Music, in one queue.</sub>
+      <img src="docs/screenshots/artist.jpg" alt="Artist page" width="240" /><br/><br/>
+      <b>What's next, on every artist</b><br/>
+      <sub>An announced album takes the release card, with a one-tap Pre-Save. Otherwise it shows the newest release of any kind, dated to the day.</sub>
     </td>
     <td width="33%" align="center" valign="top">
       <img src="docs/screenshots/icons.jpg" alt="App icons" width="240" /><br/><br/>
@@ -70,7 +70,6 @@ Everything [BitChord](https://github.com/kushagrasinghx/BitChord) does, plus you
 
 #### Also new
 - **Upcoming** on Home, under Top Picks.
-- **Artist pages** show the next album when one is announced, else the newest release of any kind, with a quick Pre-Save.
 - **Playlist sync** to your server, with missing songs requested automatically.
 - **Singles to albums**: replace singles when the album arrives, playlists included.
 - **Listen Together** on your own companion.
