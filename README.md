@@ -52,7 +52,7 @@ Everything [BitChord](https://github.com/kushagrasinghx/BitChord) does, plus you
     <td width="33%" align="center" valign="top">
       <img src="docs/screenshots/album.jpg" alt="Album page" width="240" /><br/><br/>
       <b>Apple Music-style pages</b><br/>
-      <sub>Genre, year and the real quality your server has (Lossless, Hi-Res Lossless), disc sections and full-screen covers. Your server plays up to 24-bit FLAC next to YouTube Music.</sub>
+      <sub>Full-screen animated covers, genre, year and the real quality your server has (Lossless, Hi-Res Lossless), and disc sections. Your server plays up to 24-bit FLAC next to YouTube Music.</sub>
     </td>
   </tr>
   <tr>
