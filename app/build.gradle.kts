@@ -178,6 +178,8 @@ android {
             // Carried here too — see [betaSuffix]. A sideloaded beta is a
             // release build, and it is the one that most needs the marker.
             if (betaSuffix.isNotEmpty()) versionNameSuffix = "-$betaSuffix"
+            // Local investigation only (heap dumps of the installed app): -Pbitchord.debuggable=true
+            isDebuggable = providers.gradleProperty("bitchord.debuggable").orNull == "true"
             /*
              * On for what it does to speed, not size. Compose is written to be
              * run through R8 — without it every composable keeps the debug-era

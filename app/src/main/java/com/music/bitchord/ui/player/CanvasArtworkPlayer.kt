@@ -1097,12 +1097,32 @@ internal fun mimeTypeOf(url: String): String? {
     }
 }
 
+/**
+ * A few seconds ahead and at most [CANVAS_BUFFER_BYTES], instead of ExoPlayer's video default
+ * (up to ~131 MB of heap, refilled on every loop of a repeating clip). Apple's motion covers are
+ * high-bitrate video: one of them buffered ~75 MB, and the player's cover plus an album page's
+ * ran the app out of memory. The clip is cached on disk, so a small buffer costs nothing.
+ */
+private fun canvasLoadControl() = androidx.media3.exoplayer.DefaultLoadControl.Builder()
+    .setBufferDurationsMs(
+        /* minBufferMs = */ 2_000,
+        /* maxBufferMs = */ 6_000,
+        /* bufferForPlaybackMs = */ 500,
+        /* bufferForPlaybackAfterRebufferMs = */ 1_000,
+    )
+    .setTargetBufferBytes(CANVAS_BUFFER_BYTES)
+    .setPrioritizeTimeOverSizeThresholds(false)
+    .build()
+
+private const val CANVAS_BUFFER_BYTES = 12 * 1024 * 1024
+
 /** Shared by the displayed clip and the AutoMix standby; silent and no audio focus. */
 internal fun newCanvasDecoder(context: Context): ExoPlayer {
     val player = ExoPlayer.Builder(context)
         .setMediaSourceFactory(
             DefaultMediaSourceFactory(CanvasCache.dataSourceFactory(OkHttpDataSource.Factory(Http.client))),
         )
+        .setLoadControl(canvasLoadControl())
         .build()
     try {
         player.volume = 0f
