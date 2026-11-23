@@ -42,8 +42,8 @@ buildscript {
  * release tag's alone.
  */
 // BitChord+ numbers its releases <upstream version>.<n>: 1.10.1 is the first one built on BitChord 1.10.
-extra["bitchordVersionCode"] = 4201
-extra["bitchordVersionName"] = "1.10.1"
+extra["bitchordVersionCode"] = 4202
+extra["bitchordVersionName"] = "1.10.2"
 // The BitChord release this build has merged. AppUpdateChecker compares it with the newest upstream release.
 extra["bitchordUpstreamVersion"] = "1.10"
 
