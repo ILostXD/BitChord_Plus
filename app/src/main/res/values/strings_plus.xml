@@ -134,6 +134,9 @@
     <string name="album_from_singles_any">One</string>
     <string name="album_from_singles_half">Half</string>
     <string name="album_from_singles_all">All</string>
+    <string name="companion_version">Companion %1$s</string>
+    <string name="companion_up_to_date">Companion %1$s, up to date</string>
+    <string name="companion_update_available">Companion %1$s. Version %2$s is out: tap to see how to update</string>
     <string name="dashboard_clear_all">Clear all</string>
     <string name="dashboard_cleared">Cleared</string>
     <string name="dashboard_deleted">%1$s was deleted</string>

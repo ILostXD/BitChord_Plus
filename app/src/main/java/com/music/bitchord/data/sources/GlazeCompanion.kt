@@ -189,6 +189,18 @@ object GlazeCompanion {
         }, "POST")
     }
 
+    /** The companion's version and the newest released one, which the companion checks on GitHub. */
+    data class CompanionVersion(val version: String, val latest: String?, val updateAvailable: Boolean)
+
+    suspend fun version(server: SourceConfig): CompanionVersion? = runCatching {
+        val json = send(server, "/api/v1/capabilities", null, "GET") as JsonObject
+        CompanionVersion(
+            json.text("version") ?: return@runCatching null,
+            json.text("latest_version")?.takeIf { it.isNotBlank() },
+            (json["update_available"] as? JsonPrimitive)?.booleanOrNull == true,
+        )
+    }.getOrNull()
+
     /** Retries a failed job with its original request. */
     suspend fun retry(server: SourceConfig, jobId: String): Job =
         call(server, "/api/v1/acquisition/jobs", buildJsonObject { put("retry_id", jobId) }).toJob()

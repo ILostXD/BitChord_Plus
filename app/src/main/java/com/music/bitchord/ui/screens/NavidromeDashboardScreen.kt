@@ -252,6 +252,23 @@ fun NavidromeDashboardScreen(contentPadding: PaddingValues, modifier: Modifier =
                             }
                         }
                     }
+                    // Which companion this is, and a link to its newest release when it is behind.
+                    var version by remember { mutableStateOf<GlazeCompanion.CompanionVersion?>(null) }
+                    LaunchedEffect(server.id) { version = GlazeCompanion.version(server) }
+                    version?.let { v ->
+                        val uri = androidx.compose.ui.platform.LocalUriHandler.current
+                        Text(
+                            text = if (v.updateAvailable && v.latest != null) stringResource(R.string.companion_update_available, v.version, v.latest)
+                            else if (v.latest != null) stringResource(R.string.companion_up_to_date, v.version)
+                            else stringResource(R.string.companion_version, v.version),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (v.updateAvailable) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .then(if (v.updateAvailable) Modifier.clickable { uri.openUri("https://github.com/ILostXD/BitChord_Plus_Companion/releases/latest") } else Modifier)
+                                .padding(horizontal = 16.dp, vertical = 8.dp),
+                        )
+                    }
                 }
             }
             if (server == null) return@LazyColumn
