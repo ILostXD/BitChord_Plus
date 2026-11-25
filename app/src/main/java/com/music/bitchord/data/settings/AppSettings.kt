@@ -519,6 +519,8 @@ object AppSettings {
     val hideUpcoming = MutableStateFlow(false)
     /** AutoPlay reordered to your taste (see Taste). */
     val smartQueue = MutableStateFlow(true)
+    /** Artist pages: the album page's long Play pill instead of the big Play circle. */
+    val artistLongPlay = MutableStateFlow(false)
     /** Navidrome scrobbles to Last.fm/ListenBrainz itself, so plays it gets aren't sent from here too. */
     val navidromeForwardsScrobbles = MutableStateFlow(false)
 
@@ -1164,6 +1166,7 @@ object AppSettings {
         hideRecents.value = prefs.getBoolean(KEY_HIDE_RECENTS, false)
         hideUpcoming.value = prefs.getBoolean(KEY_HIDE_UPCOMING, false)
         smartQueue.value = prefs.getBoolean(KEY_SMART_QUEUE, true)
+        artistLongPlay.value = prefs.getBoolean(KEY_ARTIST_LONG_PLAY, false)
         navidromeForwardsScrobbles.value = prefs.getBoolean(KEY_NAVIDROME_FORWARDS, false)
         serverLossyFallback.value = prefs.getBoolean(KEY_SERVER_LOSSY_FALLBACK, false)
         hideHomeVideos.value = prefs.getBoolean(KEY_HIDE_HOME_VIDEOS, false)
@@ -1680,6 +1683,11 @@ object AppSettings {
     fun setNavidromeForwardsScrobbles(value: Boolean) {
         navidromeForwardsScrobbles.value = value
         prefs.edit().putBoolean(KEY_NAVIDROME_FORWARDS, value).apply()
+    }
+
+    fun setArtistLongPlay(value: Boolean) {
+        artistLongPlay.value = value
+        prefs.edit().putBoolean(KEY_ARTIST_LONG_PLAY, value).apply()
     }
 
     fun setSmartQueue(value: Boolean) {
@@ -2595,6 +2603,7 @@ object AppSettings {
     private const val KEY_HIDE_RECENTS = "hide_recents"
     private const val KEY_HIDE_UPCOMING = "hide_upcoming"
     private const val KEY_SMART_QUEUE = "smart_queue"
+    private const val KEY_ARTIST_LONG_PLAY = "artist_long_play"
     private const val KEY_NAVIDROME_FORWARDS = "navidrome_forwards_scrobbles"
     private const val KEY_SERVER_LOSSY_FALLBACK = "server_lossy_fallback"
     private const val KEY_HIDE_HOME_VIDEOS = "hide_home_videos"

@@ -243,6 +243,7 @@ fun SettingsScreen(
     val automixPerformance by AppSettings.automixPerformanceMode.collectAsStateWithLifecycle()
     val skipSilence by AppSettings.skipSilence.collectAsStateWithLifecycle()
     val smartQueue by AppSettings.smartQueue.collectAsStateWithLifecycle()
+    val artistLongPlay by AppSettings.artistLongPlay.collectAsStateWithLifecycle()
     val sleepTimerFadeOut by AppSettings.sleepTimerFadeOut.collectAsStateWithLifecycle()
     val dolbyAtmos by AppSettings.dolbyAtmos.collectAsStateWithLifecycle()
     val directSourceStream by AppSettings.directSourceStream.collectAsStateWithLifecycle()
@@ -1309,6 +1310,16 @@ fun SettingsScreen(
                         onCheckedChange = AppSettings::setAutoArtworkLayout,
                     )
                 }
+            }
+            val artistLongPlayTitle = stringResource(R.string.artist_long_play)
+            row(artistLongPlayTitle, "artist", "play", "button", "pill", "glaze") {
+                SettingsRow(
+                    icon = SfIcons.Person,
+                    title = artistLongPlayTitle,
+                    subtitle = stringResource(R.string.artist_long_play_subtitle),
+                    trailing = { IosSwitch(checked = artistLongPlay, onCheckedChange = AppSettings::setArtistLongPlay) },
+                    onClick = { AppSettings.setArtistLongPlay(!artistLongPlay) },
+                )
             }
             // Listed at every width: the page itself keeps the framed sleeve
             // wherever a square the window's width wouldn't fit — see

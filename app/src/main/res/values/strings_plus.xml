@@ -150,6 +150,8 @@
     <string name="glass_brightness">Glass brightness</string>
     <string name="glass_darker">Darker</string>
     <string name="glass_brighter">Brighter</string>
+    <string name="artist_long_play">Long Play button on artists</string>
+    <string name="artist_long_play_subtitle">Artist pages use the album page\'s Play pill, with Shuffle and Follow the same height beside it</string>
     <string name="smart_queue">Smart queue</string>
     <string name="smart_queue_subtitle">AutoPlay and radios learn from what you finish, skip and play on your server, and bring back favourites you haven\'t heard in a while</string>
     <string name="presave_landed_channel">Pre-Saved albums</string>

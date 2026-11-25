@@ -1897,11 +1897,15 @@ private fun ActionRow(
     /** Apple's fill for the Play circle; null leaves it white. */
     playColor: Color? = null,
 ) {
+    val longPlay by AppSettings.artistLongPlay.collectAsStateWithLifecycle()
+    // The album page's row instead (Glaze's artist pages too): a long Play pill between two
+    // circles, all three the same height.
+    val side = if (longPlay) RELEASE_SIDE_BUTTON else ARTIST_SIDE_BUTTON
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = HEADER_GUTTER),
-        horizontalArrangement = Arrangement.spacedBy(ARTIST_ACTION_GAP, Alignment.CenterHorizontally),
+        horizontalArrangement = Arrangement.spacedBy(if (longPlay) RELEASE_ACTION_GAP else ARTIST_ACTION_GAP, Alignment.CenterHorizontally),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         CircleIconButton(
@@ -1909,15 +1913,26 @@ private fun ActionRow(
             contentDescription = stringResource(R.string.shuffle),
             onClick = onShuffle,
             haptic = Haptic.Resume,
-            size = ARTIST_SIDE_BUTTON,
+            size = side,
         )
 
-        PlayCircle(
-            onClick = onPlay,
-            size = ARTIST_PLAY_BUTTON,
-            iconScale = ARTIST_PLAY_ICON_SCALE,
-            containerColor = playColor ?: Color.White,
-        )
+        if (longPlay) {
+            ActionPill(
+                icon = BitChordIcons.Play,
+                label = stringResource(R.string.play),
+                onClick = onPlay,
+                filled = true,
+                size = RELEASE_SIDE_BUTTON,
+                modifier = Modifier.width(RELEASE_PLAY_WIDTH),
+            )
+        } else {
+            PlayCircle(
+                onClick = onPlay,
+                size = ARTIST_PLAY_BUTTON,
+                iconScale = ARTIST_PLAY_ICON_SCALE,
+                containerColor = playColor ?: Color.White,
+            )
+        }
 
         if (subscription != null) {
             CircleIconButton(
@@ -1927,14 +1942,14 @@ private fun ActionRow(
                 ),
                 onClick = { onToggleSubscription?.invoke() },
                 haptic = if (subscription.subscribed) Haptic.ToggleOff else Haptic.ToggleOn,
-                size = ARTIST_SIDE_BUTTON,
+                size = side,
             )
         } else {
             CircleIconButton(
                 icon = Icons.Rounded.StarBorder,
                 contentDescription = stringResource(R.string.subscribe),
                 onClick = {},
-                size = ARTIST_SIDE_BUTTON,
+                size = side,
                 enabled = false,
             )
         }
