@@ -1035,6 +1035,10 @@ private fun BitChordApp(
     // The find-in-list text, held here because its field floats in the top bar's layer.
     var detailQuery by rememberSaveable(topDetail?.browseId) { mutableStateOf("") }
     LaunchedEffect(detailSearching) { if (!detailSearching) detailQuery = "" }
+    // Requests' search: the same floating field, pulled down from the top of its list.
+    var requestsSearching by remember { mutableStateOf(false) }
+    var requestsQuery by remember { mutableStateOf("") }
+    LaunchedEffect(requestsSearching) { if (!requestsSearching) requestsQuery = "" }
     val likeStatuses by viewModel.likeStatuses.collectAsStateWithLifecycle()
     // A device file's heart is the device's Liked playlist, not a YouTube
     // rating: the file has no identity there to rate. One rule for every
@@ -3269,7 +3273,12 @@ private fun BitChordApp(
                                 onConfirmJioSaavn = { confirmJioSaavn = true },
                             )
                         } else if (pageRoute == AppRoute.NavidromeDashboard) {
-                            com.music.bitchord.ui.screens.NavidromeDashboardScreen(contentPadding = listPadding) { id, title, subtitle, cover ->
+                            com.music.bitchord.ui.screens.NavidromeDashboardScreen(
+                                contentPadding = listPadding,
+                                query = requestsQuery,
+                                searching = requestsSearching,
+                                onSearchingChange = { requestsSearching = it },
+                            ) { id, title, subtitle, cover ->
                                 viewModel.openDetail(id, title, subtitle, cover, BrowseType.ALBUM)
                             }
                         } else if (pageRoute == AppRoute.Downloads) {
@@ -4389,17 +4398,20 @@ private fun BitChordApp(
 
                 // The album page's floating search field, in the bar's layer so it
                 // wears the same liquid glass as the back button and actions.
+                val requestsOnTop = visibleEntry?.route == AppRoute.NavidromeDashboard
+                LaunchedEffect(requestsOnTop) { if (!requestsOnTop) requestsSearching = false }
+                val searchingRequests = requestsSearching && requestsOnTop
                 val searchPillAlpha by animateFloatAsState(
-                    targetValue = if (detailSearching && isDetailVisible) 1f else 0f,
+                    targetValue = if ((detailSearching && isDetailVisible) || searchingRequests) 1f else 0f,
                     animationSpec = tween(160),
                     label = "searchPillAlpha",
                 )
                 if (searchPillAlpha > 0f) {
                     FloatingSearchPill(
-                        query = detailQuery,
-                        onQueryChange = { detailQuery = it },
-                        onClose = { detailSearching = false },
-                        placeholder = stringResource(R.string.search_this_list),
+                        query = if (searchingRequests) requestsQuery else detailQuery,
+                        onQueryChange = { if (searchingRequests) requestsQuery = it else detailQuery = it },
+                        onClose = { if (searchingRequests) requestsSearching = false else detailSearching = false },
+                        placeholder = stringResource(if (searchingRequests) R.string.dashboard_search else R.string.search_this_list),
                         hazeState = hazeState,
                         modifier = Modifier
                             .align(Alignment.TopCenter)

@@ -279,8 +279,12 @@ class SubsonicSource(
     suspend fun findAlbum(title: String, artist: String): Entry? {
         val hits = (request("search3", "query" to title, "songCount" to "0", "artistCount" to "0", "albumCount" to "20")
             ["searchResult3"] as? JsonObject)?.array("album").orEmpty().mapNotNull { (it as? JsonObject)?.toAlbum() }
-        val id = matchIn(hits.map { Triple(it.id, it.title, it.subtitle) }, title, artist) ?: return null
-        return hits.firstOrNull { it.id == id }
+        matchIn(hits.map { Triple(it.id, it.title, it.subtitle) }, title, artist)?.let { id -> return hits.firstOrNull { it.id == id } }
+        // A title search can't find "?" (a search drops symbols): look through the artist's albums instead.
+        if (title.any { it.isLetterOrDigit() }) return null
+        val albums = findArtist(artist.split(",", "&", " feat").first().trim())?.let { artist(it.id).albums }.orEmpty()
+        val id = matchIn(albums.map { Triple(it.id, it.title, it.subtitle) }, title, artist) ?: return null
+        return albums.firstOrNull { it.id == id }
     }
 
     private fun cover(id: String?) = id?.let { url("getCoverArt", "id" to it, "size" to "600") }

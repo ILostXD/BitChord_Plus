@@ -211,6 +211,8 @@ import com.music.bitchord.ui.components.SearchPlayingBars
 import com.music.bitchord.ui.components.libraryGrid
 import com.music.bitchord.ui.components.lightweightLiquidGlass
 import com.music.bitchord.ui.components.detailSkeleton
+import com.music.bitchord.ui.components.ShelfSkeleton
+import com.music.bitchord.ui.components.songListSkeleton
 import com.music.bitchord.ui.components.topBarContentPadding
 import com.music.bitchord.ui.components.trackColumnWidth
 import com.music.bitchord.ui.haptics.Haptic
@@ -586,11 +588,17 @@ fun DetailScreen(
     // Spotify / Glaze: songs like a playlist's own, from radios of a few of its
     // tracks, when YouTube offers no suggestions of its own (playlists you don't own).
     var playlistRecs by remember(page.browseId) { mutableStateOf(emptyList<Song>()) }
+    var playlistRecsLoading by remember(page.browseId) { mutableStateOf(false) }
     LaunchedEffect(page.browseId, songs.isNotEmpty()) {
         if (page.type != BrowseType.PLAYLIST || page.browseId.startsWith("local:") ||
             page.suggestedSongs.isNotEmpty() || songs.isEmpty() || playlistRecs.isNotEmpty()
         ) return@LaunchedEffect
-        playlistRecs = runCatching { playlistRecommendations(songs) }.getOrDefault(emptyList())
+        playlistRecsLoading = true
+        try {
+            playlistRecs = runCatching { playlistRecommendations(songs) }.getOrDefault(emptyList())
+        } finally {
+            playlistRecsLoading = false
+        }
     }
     val suggested = remember(page.suggestedSongs, query) {
         page.suggestedSongs.matching(query).map { it.value }
@@ -656,22 +664,33 @@ fun DetailScreen(
     }
     // "More from <artist>" and "Similar albums", built from the artist's YouTube Music page.
     var recommendations by remember(page.browseId) { mutableStateOf(emptyList<HomeShelf>()) }
+    // Skeleton shelves stand in until the lookup has answered (or given up).
+    var recommendationsLoading by remember(page.browseId) { mutableStateOf(page.type == BrowseType.ALBUM) }
     val albumArtistId = songs.firstNotNullOfOrNull { it.artistId }
     val moreFromTitle = stringResource(R.string.more_from_artist, credit)
     val similarTitle = stringResource(R.string.similar_albums)
     LaunchedEffect(page.browseId, albumArtistId) {
-        if (page.type != BrowseType.ALBUM || albumArtistId == null) return@LaunchedEffect
-        // YouTube Music answers these artist pages unreliably under load, so a
-        // miss is retried a couple of times before the page goes without.
-        for (wait in listOf(0L, 2_000L, 6_000L)) {
-            if (wait > 0) delay(wait)
-            val found = runCatching {
-                albumRecommendations(page.browseId, albumArtistId, moreFromTitle, similarTitle)
-            }.getOrDefault(emptyList())
-            if (found.isNotEmpty()) {
-                recommendations = found
-                break
+        if (page.type != BrowseType.ALBUM || songs.isEmpty()) return@LaunchedEffect
+        try {
+            // A server's album names its artist by the server's own id: YouTube Music's artist
+            // of the same name stands in, so its pages get these shelves too.
+            val artistId = albumArtistId?.takeIf { it.startsWith("UC") }
+                ?: youtubeArtistId(primaryArtist(credit) ?: credit)
+                ?: return@LaunchedEffect
+            // YouTube Music answers these artist pages unreliably under load, so a
+            // miss is retried a couple of times before the page goes without.
+            for (wait in listOf(0L, 2_000L, 6_000L)) {
+                if (wait > 0) delay(wait)
+                val found = runCatching {
+                    albumRecommendations(page.browseId, artistId, moreFromTitle, similarTitle, page.title)
+                }.getOrDefault(emptyList())
+                if (found.isNotEmpty()) {
+                    recommendations = found
+                    break
+                }
             }
+        } finally {
+            recommendationsLoading = false
         }
     }
 
@@ -1085,6 +1104,9 @@ fun DetailScreen(
                 }
             }
 
+            if (suggested.isEmpty() && playlistRecsLoading && query.isBlank()) {
+                songListSkeleton(count = 4, keyPrefix = "skeleton:recs")
+            }
             if (suggested.isEmpty() && playlistRecs.isNotEmpty() && query.isBlank()) {
                 item(key = "recs-separator") {
                     // The heading carries 10dp of its own above the text, so this
@@ -1175,6 +1197,11 @@ fun DetailScreen(
                             )
                         }
                     }
+                }
+            }
+            if (albumSection && recommendationsLoading && recommendations.isEmpty()) {
+                items(2, key = { "skeleton:recs:$it" }) { index ->
+                    Box(Modifier.bottomSectionShade().padding(top = ALBUM_FOOTER_GAP - 10.dp)) { ShelfSkeleton(index = index) }
                 }
             }
             if (albumSection) item(key = "section-tail") { BottomSectionTail() }
@@ -2904,11 +2931,14 @@ private suspend fun albumRecommendations(
     artistId: String,
     moreFromTitle: String,
     similarTitle: String,
+    albumTitle: String,
 ): List<HomeShelf> = withContext(Dispatchers.IO) {
     fun ShelfItem.isRelease() = browseId?.startsWith("MPREb") == true
     val items = YtMusicRepository.artistLanding(artistId).getOrNull()?.sections?.flatMap { it.items }
         ?: return@withContext emptyList()
-    val releases = items.filter { it.isRelease() && it.browseId != albumId }.distinctBy { it.browseId }.take(12)
+    // By title too: a server's album has its own id, and isn't "more from" itself.
+    val releases = items.filter { it.isRelease() && it.browseId != albumId && !it.title.equals(albumTitle, ignoreCase = true) }
+        .distinctBy { it.browseId }.take(12)
     val similarArtists = items.filter { it.browseId?.startsWith("UC") == true && it.browseId != artistId }
         .distinctBy { it.browseId }.take(8)
     val similar = coroutineScope {
@@ -2926,6 +2956,15 @@ private suspend fun albumRecommendations(
     )
 }
 
+
+/** YouTube Music's artist called [name] exactly (ignoring case), for pages that only have the name. */
+private suspend fun youtubeArtistId(name: String): String? = withContext(Dispatchers.IO) {
+    YtMusicRepository.search(name, com.music.bitchord.data.model.SearchFilter.ARTISTS).getOrNull()
+        ?.filterIsInstance<com.music.bitchord.data.model.SearchResult.Browse>()
+        ?.map { it.item }
+        ?.firstOrNull { it.title.equals(name.trim(), ignoreCase = true) }
+        ?.browseId?.takeIf { it.startsWith("UC") }
+}
 
 /**
  * The first name of a joint credit ("Travis Scott & Grand Theft Auto VI"), or

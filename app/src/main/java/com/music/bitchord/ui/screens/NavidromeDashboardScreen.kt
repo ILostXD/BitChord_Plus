@@ -21,6 +21,7 @@ import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -93,6 +94,10 @@ private val Red = Color(0xFFFF453A)
 fun NavidromeDashboardScreen(
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
+    /** The floating search's text (it lives in the top bar's layer), and whether it is up. */
+    query: String = "",
+    searching: Boolean = false,
+    onSearchingChange: (Boolean) -> Unit = {},
     /** Opens a page: (browse id, title, subtitle, artwork). */
     onOpen: (String, String, String, String?) -> Unit = { _, _, _, _ -> },
 ) {
@@ -130,7 +135,6 @@ fun NavidromeDashboardScreen(
         // By when each attempt was made, not last touched: an old failure can't cover a later success.
         visible.sortedByDescending { it.createdAt }.distinctBy(::requestKey).filter { it.job.status != "cancelled" }
     }
-    var query by remember { mutableStateOf("") }
     var expanded by remember { mutableStateOf(emptySet<String>()) }
     val shown = remember(latest, query) {
         val words = query.trim().lowercase().split(Regex("\\s+")).filter { it.isNotEmpty() }
@@ -165,12 +169,52 @@ fun NavidromeDashboardScreen(
         scope.launch { runCatching { GlazeCompanion.setHidden(server, removal.ids, false) }; refresh++ }
     }
 
+    // Glaze's gesture, as on album pages: pulling down at the top of the list brings up the floating
+    // search; scrolling the list away again puts it back while it is empty.
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val openSearch by rememberUpdatedState({ if (server != null) onSearchingChange(true) })
+    val hideSearch by rememberUpdatedState({ if (query.isBlank()) onSearchingChange(false) })
+    val pullDistance = with(androidx.compose.ui.platform.LocalDensity.current) { 48.dp.toPx() }
+    val hideDistance = with(androidx.compose.ui.platform.LocalDensity.current) { 24.dp.toPx() }
+    val searchGesture = remember(listState, pullDistance, hideDistance) {
+        object : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
+            var pull = 0f
+            var away = 0f
+            override fun onPostScroll(
+                consumed: androidx.compose.ui.geometry.Offset,
+                available: androidx.compose.ui.geometry.Offset,
+                source: androidx.compose.ui.input.nestedscroll.NestedScrollSource,
+            ): androidx.compose.ui.geometry.Offset {
+                if (source != androidx.compose.ui.input.nestedscroll.NestedScrollSource.UserInput) return androidx.compose.ui.geometry.Offset.Zero
+                if (!listState.canScrollBackward && available.y > 0f) {
+                    pull += available.y
+                    away = 0f
+                    if (pull >= pullDistance) { openSearch(); pull = 0f }
+                } else if (consumed.y < 0f) {
+                    away -= consumed.y
+                    pull = 0f
+                    if (away >= hideDistance) { hideSearch(); away = 0f }
+                } else {
+                    pull = 0f
+                    away = 0f
+                }
+                return androidx.compose.ui.geometry.Offset.Zero
+            }
+        }
+    }
+
     // The source's own name (what it was called in Sources, else its host): never a fixed "Navidrome".
     val serverName = server?.displayName ?: stringResource(R.string.dashboard_your_server)
     val clearedLabel = stringResource(R.string.dashboard_cleared)
     val deletedLabel = stringResource(R.string.dashboard_deleted)
     Box(modifier.fillMaxSize()) {
-        LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = contentPadding) {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize().nestedScroll(searchGesture),
+            contentPadding = contentPadding,
+        ) {
+            // Room for the floating search field while it is up.
+            if (searching) item(key = "search-space") { Spacer(Modifier.height(64.dp)) }
             item(key = "title") {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -267,31 +311,9 @@ fun NavidromeDashboardScreen(
                             }
                         }
                     }
-                    // Which companion this is, and a link to its newest release when it is behind.
-                    var version by remember { mutableStateOf<GlazeCompanion.CompanionVersion?>(null) }
-                    LaunchedEffect(server.id) { version = GlazeCompanion.version(server) }
-                    version?.let { v ->
-                        val uri = androidx.compose.ui.platform.LocalUriHandler.current
-                        Text(
-                            text = if (v.updateAvailable && v.latest != null) stringResource(R.string.companion_update_available, v.version, v.latest)
-                            else if (v.latest != null) stringResource(R.string.companion_up_to_date, v.version)
-                            else stringResource(R.string.companion_version, v.version),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (v.updateAvailable) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .then(if (v.updateAvailable) Modifier.clickable { uri.openUri("https://github.com/ILostXD/BitChord_Plus_Companion/releases/latest") } else Modifier)
-                                .padding(horizontal = 16.dp, vertical = 8.dp),
-                        )
-                    }
                 }
             }
             if (server == null) return@LazyColumn
-            if (latest.size > 5) {
-                item(key = "search") {
-                    com.music.bitchord.ui.components.ListSearchField(query, { query = it }, stringResource(R.string.dashboard_search))
-                }
-            }
             if (query.isNotBlank() && shown.isEmpty()) {
                 item(key = "no-results") {
                     Text(
@@ -340,6 +362,26 @@ fun NavidromeDashboardScreen(
             group("added", R.string.dashboard_added, added, null, delete, expanded, expand) { info -> JobRow(info, Green, kindText(info), onClick = { open(info) }) }
             group("have", R.string.dashboard_already_have, have, null, delete, expanded, expand) { info ->
                 JobRow(info, Green, info.job.summary ?: stringResource(R.string.server_download_done), onClick = { open(info) })
+            }
+            // Which companion this is, and a link to its newest release when it is behind.
+            item(key = "version") {
+                var version by remember { mutableStateOf<GlazeCompanion.CompanionVersion?>(null) }
+                LaunchedEffect(server.id) { version = GlazeCompanion.version(server) }
+                version?.let { v ->
+                    val uri = androidx.compose.ui.platform.LocalUriHandler.current
+                    Text(
+                        text = if (v.updateAvailable && v.latest != null) stringResource(R.string.companion_update_available, v.version, v.latest)
+                        else if (v.latest != null) stringResource(R.string.companion_up_to_date, v.version)
+                        else stringResource(R.string.companion_version, v.version),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (v.updateAvailable) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .then(if (v.updateAvailable) Modifier.clickable { uri.openUri("https://github.com/ILostXD/BitChord_Plus_Companion/releases/latest") } else Modifier)
+                            .padding(horizontal = 32.dp, vertical = 28.dp),
+                    )
+                }
             }
         }
 
