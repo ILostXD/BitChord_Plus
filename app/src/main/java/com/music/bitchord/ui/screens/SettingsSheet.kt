@@ -963,7 +963,7 @@ fun SettingsScreen(
             val smartQueueTitle = stringResource(R.string.smart_queue)
             row(smartQueueTitle, "autoplay", "radio", "queue", "taste") {
                 SettingsRow(
-                    icon = SfIcons.Radio,
+                    icon = SfIcons.SmartQueue,
                     title = smartQueueTitle,
                     subtitle = stringResource(R.string.smart_queue_subtitle),
                     trailing = { IosSwitch(checked = smartQueue, onCheckedChange = AppSettings::setSmartQueue) },

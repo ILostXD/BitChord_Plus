@@ -50,7 +50,9 @@ object Taste {
     private const val HALF_LIFE_MS = 45L * 86_400_000
     private const val MAX_TRACKS = 4000
     private val json = Json { ignoreUnknownKeys = true }
-    private val writer = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    // One at a time, in order: a song's pending file must not outlive its finish.
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private val writer = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
     private var file: File? = null
 
     @Volatile var state = State()
@@ -59,7 +61,35 @@ object Taste {
     fun init(context: Context) {
         val f = File(context.filesDir, "taste.json").also { file = it }
         state = runCatching { json.decodeFromString<State>(f.readText()) }.getOrDefault(State())
+        // The song that was playing when the app last closed: scored now, as stopped rather than skipped.
+        val p = File(context.filesDir, "taste-pending.json").also { pendingFile = it }
+        runCatching { json.decodeFromString<Pending>(p.readText()) }.getOrNull()?.let { pending ->
+            val song = pending.track.toSong().copy(queueTier = if (pending.automatic) QueueTier.AUTOPLAY else QueueTier.CONTEXT)
+            state = learn(state, song, pending.played, pending.length, pending.at, stopped = true)
+            save()
+        }
+        p.delete()
     }
+
+    /** The song being listened to, kept on disk so closing the app doesn't lose it. */
+    @Serializable
+    data class Pending(val track: Track, val automatic: Boolean, val played: Long, val length: Long, val at: Long)
+
+    private var pendingFile: File? = null
+
+    /** Writes the current song's listening so far; [ListeningRecorder] calls it on pause and every half minute. */
+    @Synchronized
+    fun flushPending() {
+        val song = current ?: return
+        val f = pendingFile ?: return
+        val pending = Pending(Track(song.videoId, song.title, song.artist, song.thumbnailUrl, song.durationText, song.albumName),
+            song.queueTier == QueueTier.AUTOPLAY, played, length, System.currentTimeMillis())
+        val text = json.encodeToString(Pending.serializer(), pending)
+        writer.launch { runCatching { File(f.path + ".tmp").apply { writeText(text) }.renameTo(f) } }
+    }
+
+    private fun Track.toSong() = Song(videoId = id, title = title, artist = artist, thumbnailUrl = thumbnail,
+        durationText = duration, albumName = album)
 
     private fun save() {
         val f = file ?: return
@@ -96,13 +126,15 @@ object Taste {
     private fun finish(song: Song, listenedMs: Long, lengthMs: Long, now: Long) {
         state = learn(state, song, listenedMs, lengthMs.takeIf { it > 0 } ?: song.durationMillis(), now)
         save()
+        pendingFile?.let { f -> writer.launch { f.delete() } }
     }
 
     /** [state] after [song] ended having played for [listenedMs] of [lengthMs]. */
-    fun learn(state: State, song: Song, listenedMs: Long, lengthMs: Long, now: Long): State {
+    fun learn(state: State, song: Song, listenedMs: Long, lengthMs: Long, now: Long, stopped: Boolean = false): State {
         if (listenedMs <= 0) return state
         val automatic = song.queueTier == QueueTier.AUTOPLAY
-        val earlySkip = listenedMs < 30_000 && lengthMs > 60_000
+        // Closing the app isn't a skip.
+        val earlySkip = !stopped && listenedMs < 30_000 && lengthMs > 60_000
         val completed = lengthMs > 0 && listenedMs >= lengthMs * 8 / 10
         val qualified = listenedMs >= min(if (lengthMs > 0) lengthMs / 2 else 30_000, 4 * 60_000L)
         val skip = if (earlySkip) (if (automatic) 1.0 else 0.2) else 0.0
@@ -185,9 +217,7 @@ object Taste {
             .take(ordered.size / 6)
             .shuffled(random)
         favourites.forEachIndexed { n, (t, _) ->
-            val song = Song(videoId = t.id, title = t.title, artist = t.artist, thumbnailUrl = t.thumbnail,
-                durationText = t.duration, albumName = t.album)
-            ordered.add((3 + n * 6).coerceAtMost(ordered.size), song)
+            ordered.add((3 + n * 6).coerceAtMost(ordered.size), t.toSong())
         }
         return ordered
     }

@@ -65,6 +65,7 @@ import com.composables.sfsymbols.monochrome.SFMusicMicrophone
 import com.composables.sfsymbols.monochrome.SFMusicNote
 import com.composables.sfsymbols.monochrome.SFMusicNoteHouse
 import com.composables.sfsymbols.monochrome.SFMusicNoteList
+import com.composables.sfsymbols.monochrome.SFSparklesRectangleStack
 import com.composables.sfsymbols.monochrome.SFMusicNoteSlash
 import com.composables.sfsymbols.monochrome.SFPaintbrushPointed
 import com.composables.sfsymbols.monochrome.SFPencil
@@ -225,6 +226,8 @@ object SfIcons {
     val PlayLast: ImageVector by lazy { bold(SfSymbols.Monochrome.SFTextLineLastAndArrowtriangleForward) }
     val PlayNext: ImageVector by lazy { bold(SfSymbols.Monochrome.SFTextLineFirstAndArrowtriangleForward) }
     val Radio: ImageVector by lazy { bold(SfSymbols.Monochrome.SFDotRadiowavesLeftAndRight) }
+    /** A stack of cards with sparkles: the queue, picked for you. */
+    val SmartQueue: ImageVector by lazy { bold(SfSymbols.Monochrome.SFSparklesRectangleStack) }
     val RemoveFromPlaylist: ImageVector by lazy { bold(SfSymbols.Monochrome.SFTextBadgeMinus) }
     val Reorder: ImageVector by lazy { bold(SfSymbols.Monochrome.SFArrowUpArrowDown) }
     val Revert: ImageVector by lazy { bold(SfSymbols.Monochrome.SFArrowUturnBackward) }

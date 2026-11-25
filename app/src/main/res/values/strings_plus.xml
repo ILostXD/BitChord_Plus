@@ -134,6 +134,13 @@
     <string name="album_from_singles_any">One</string>
     <string name="album_from_singles_half">Half</string>
     <string name="album_from_singles_all">All</string>
+    <string name="navidrome_forwards_scrobbles">Navidrome scrobbles for me</string>
+    <string name="navidrome_forwards_scrobbles_subtitle">Turn on if Navidrome already sends your plays to Last.fm or ListenBrainz. Songs your server has are then sent only once, by Navidrome</string>
+    <string name="dashboard_retry_soon">trying again now</string>
+    <string name="dashboard_retry_minutes">trying again in %1$d min</string>
+    <string name="dashboard_retry_hours">trying again in %1$d h</string>
+    <string name="dashboard_retry_days">trying again in %1$d days</string>
+    <string name="dashboard_reason_download_stopped">The download stopped partway</string>
     <string name="smart_queue">Smart queue</string>
     <string name="smart_queue_subtitle">AutoPlay and radios learn from what you finish, skip and play on your server, and bring back favourites you haven\'t heard in a while</string>
     <string name="presave_landed_channel">Pre-Saved albums</string>

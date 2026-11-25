@@ -62,6 +62,7 @@ fun AccountAndScrobblingScreen(
     val listenBrainzEnabled by AppSettings.listenBrainzEnabled.collectAsStateWithLifecycle()
     val listenBrainzToken by AppSettings.listenBrainzToken.collectAsStateWithLifecycle()
     val listenBrainzPrimaryArtistOnly by AppSettings.listenBrainzPrimaryArtistOnly.collectAsStateWithLifecycle()
+    val serverForwards by AppSettings.navidromeForwardsScrobbles.collectAsStateWithLifecycle()
     val discordToken by AppSettings.discordToken.collectAsStateWithLifecycle()
     val discordUsername by AppSettings.discordUsername.collectAsStateWithLifecycle()
     val discordRpcEnabled by AppSettings.discordRpcEnabled.collectAsStateWithLifecycle()
@@ -272,6 +273,19 @@ fun AccountAndScrobblingScreen(
                             )
                         },
                         onClick = { AppSettings.setLastfmNowPlaying(!lastfmNowPlayingEnabled) },
+                    )
+                }
+                // Navidrome can pass plays on to Last.fm and ListenBrainz itself: then the app doesn't send them twice.
+                if (com.music.bitchord.data.sources.ServerLibrary.servers().isNotEmpty() && (lastfmEnabled || listenBrainzEnabled)) {
+                    RowDivider()
+                    SettingsRow(
+                        icon = SfIcons.Dns,
+                        title = stringResource(R.string.navidrome_forwards_scrobbles),
+                        subtitle = stringResource(R.string.navidrome_forwards_scrobbles_subtitle),
+                        trailing = {
+                            IosSwitch(checked = serverForwards, onCheckedChange = AppSettings::setNavidromeForwardsScrobbles)
+                        },
+                        onClick = { AppSettings.setNavidromeForwardsScrobbles(!serverForwards) },
                     )
                 }
             }

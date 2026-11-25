@@ -8558,6 +8558,7 @@ class PlaybackService : MediaLibraryService() {
         if (!lbEnabled || lbToken.isBlank()) return
         val endMs = System.currentTimeMillis()
         scope.launch {
+            if (com.music.bitchord.data.sources.NavidromeListening.forwardedByServer(song)) return@launch
             ListenBrainzManager.submitFinished(lbToken, song, startMs, endMs, durationMs, AppSettings.listenBrainzPrimaryArtistOnly.value)
         }
     }
@@ -8654,6 +8655,7 @@ class PlaybackService : MediaLibraryService() {
                 val lastStart = listenBrainzStartMs
                 val lastDuration = player?.duration?.takeIf { it > 0 }
                 CoroutineScope(Dispatchers.IO).launch {
+                    if (com.music.bitchord.data.sources.NavidromeListening.forwardedByServer(lastSong)) return@launch
                     ListenBrainzManager.submitFinished(
                         lbToken, lastSong, lastStart, System.currentTimeMillis(), lastDuration,
                         AppSettings.listenBrainzPrimaryArtistOnly.value,

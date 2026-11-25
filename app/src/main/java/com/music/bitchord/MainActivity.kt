@@ -3269,7 +3269,9 @@ private fun BitChordApp(
                                 onConfirmJioSaavn = { confirmJioSaavn = true },
                             )
                         } else if (pageRoute == AppRoute.NavidromeDashboard) {
-                            com.music.bitchord.ui.screens.NavidromeDashboardScreen(contentPadding = listPadding)
+                            com.music.bitchord.ui.screens.NavidromeDashboardScreen(contentPadding = listPadding) { id, title, subtitle, cover ->
+                                viewModel.openDetail(id, title, subtitle, cover, BrowseType.ALBUM)
+                            }
                         } else if (pageRoute == AppRoute.Downloads) {
                             DownloadManagerPage(
                                 onCleared = { navigator.pop() },

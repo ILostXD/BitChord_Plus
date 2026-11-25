@@ -90,7 +90,12 @@ private val Red = Color(0xFFFF453A)
  * what could not be added and why. It refreshes by itself, and is where a notification opens.
  */
 @Composable
-fun NavidromeDashboardScreen(contentPadding: PaddingValues, modifier: Modifier = Modifier) {
+fun NavidromeDashboardScreen(
+    contentPadding: PaddingValues,
+    modifier: Modifier = Modifier,
+    /** Opens a page: (browse id, title, subtitle, artwork). */
+    onOpen: (String, String, String, String?) -> Unit = { _, _, _, _ -> },
+) {
     val server = remember { GlazeCompanion.server() }
     val scope = rememberCoroutineScope()
     var jobs by remember { mutableStateOf<List<GlazeCompanion.JobInfo>?>(null) }
@@ -283,10 +288,12 @@ fun NavidromeDashboardScreen(contentPadding: PaddingValues, modifier: Modifier =
                 }
             }
             group("active", R.string.dashboard_in_progress, active, R.string.dashboard_nothing_downloading, null) { info ->
-                JobRow(info, Blue, "${kindText(info)} · ${statusText(info.job.status)}", pulse = true)
+                val percent = info.progress?.takeIf { info.job.status == "downloading" }?.let { " ${(it * 100).toInt()}%" }.orEmpty()
+                JobRow(info, Blue, "${kindText(info)} · ${statusText(info.job.status)}$percent", pulse = true)
             }
             group("bad", R.string.dashboard_failed, bad, null, delete) { info ->
-                JobRow(info, Red, failureText(info), trailing = {
+                val again = info.nextRetryAt?.let { retryText(it) }?.let { " · $it" }.orEmpty()
+                JobRow(info, Red, failureText(info) + again, trailing = {
                     if (info.canApprove) {
                         TextButton(onClick = { act { GlazeCompanion.approve(server, info.job.id) } }) { Text(stringResource(R.string.dashboard_import_anyway)) }
                     }
@@ -295,9 +302,19 @@ fun NavidromeDashboardScreen(contentPadding: PaddingValues, modifier: Modifier =
                     }
                 })
             }
-            group("added", R.string.dashboard_added, added, null, delete) { info -> JobRow(info, Green, kindText(info)) }
+            // In the library: a tap opens its album there.
+            fun open(info: GlazeCompanion.JobInfo) = scope.launch {
+                val source = com.music.bitchord.data.sources.ServerLibrary.source(server.id) ?: return@launch
+                val title = if (info.kind == "album") info.title else info.album.ifBlank { return@launch }
+                val album = runCatching { source.findAlbum(title, GlazeCompanion.cleanArtist(info.artist)) }.getOrNull() ?: return@launch
+                onOpen(
+                    com.music.bitchord.data.sources.ServerLibrary.pageId(server.id, com.music.bitchord.data.sources.ServerLibrary.Kind.ALBUM, album.id),
+                    album.title, album.subtitle, album.coverUrl,
+                )
+            }
+            group("added", R.string.dashboard_added, added, null, delete) { info -> JobRow(info, Green, kindText(info), onClick = { open(info) }) }
             group("have", R.string.dashboard_already_have, have, null, delete) { info ->
-                JobRow(info, Green, info.job.summary ?: stringResource(R.string.server_download_done))
+                JobRow(info, Green, info.job.summary ?: stringResource(R.string.server_download_done), onClick = { open(info) })
             }
         }
 
@@ -514,6 +531,7 @@ private fun JobRow(
     color: Color,
     subtitle: String,
     pulse: Boolean = false,
+    onClick: (() -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
     below: (@Composable () -> Unit)? = null,
 ) {
@@ -522,7 +540,11 @@ private fun JobRow(
         initialValue = 1f, targetValue = if (pulse) 0.3f else 1f,
         animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "dot",
     )
-    Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 11.dp, bottom = 11.dp)) {
+    Column(
+        Modifier.fillMaxWidth()
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(start = 16.dp, end = 8.dp, top = 11.dp, bottom = 11.dp),
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(52.dp)) {
                 val art = RoundedCornerShape(8.dp)
@@ -600,11 +622,25 @@ private fun statusText(status: String) = stringResource(
     },
 )
 
+/** "trying again in 4 h", for an ISO time. */
+@Composable
+private fun retryText(iso: String): String? {
+    val at = runCatching { java.time.Instant.parse(iso).toEpochMilli() }.getOrNull() ?: return null
+    val minutes = (at - System.currentTimeMillis()) / 60_000
+    return when {
+        minutes <= 1 -> stringResource(R.string.dashboard_retry_soon)
+        minutes < 60 -> stringResource(R.string.dashboard_retry_minutes, minutes.toInt())
+        minutes < 48 * 60 -> stringResource(R.string.dashboard_retry_hours, ((minutes + 30) / 60).toInt())
+        else -> stringResource(R.string.dashboard_retry_days, ((minutes + 720) / 1440).toInt())
+    }
+}
+
 @Composable
 private fun failureText(info: GlazeCompanion.JobInfo) = when (info.job.error) {
     null -> stringResource(R.string.navidrome_reason_unknown)
     "no_suitable_slskd_match" -> stringResource(R.string.navidrome_reason_no_match)
     "slskd_search_timeout" -> stringResource(R.string.dashboard_reason_timeout)
+    "slskd_download_stalled", "slskd_download_failed" -> stringResource(R.string.dashboard_reason_download_stopped)
     "metadata_review_required" -> stringResource(R.string.dashboard_reason_tags)
     else -> info.job.error.substringBefore(':').replace('_', ' ')
 }

@@ -58,6 +58,10 @@ object GlazeCompanion {
         val cover: String? = null,
         /** ISO time the request was made: of several attempts at one request, the newest counts. */
         val createdAt: String = "",
+        /** ISO time a failed request is tried again by itself, while the companion keeps trying. */
+        val nextRetryAt: String? = null,
+        /** How much of a download has arrived, 0 to 1, while it is downloading. */
+        val progress: Float? = null,
     )
 
     /** The first music server with a companion address set in Sources. */
@@ -362,10 +366,18 @@ object GlazeCompanion {
                         it.text("UpdatedAt").orEmpty(),
                         it.text("Cover")?.takeIf { c -> c.isNotBlank() },
                         it.text("CreatedAt").orEmpty(),
+                        it.text("NextRetryAt")?.takeIf { t -> t.isNotBlank() },
+                        progressOf(it),
                     )
                 }.getOrNull()
             }
         }
+
+    private fun progressOf(json: JsonObject): Float? {
+        val total = (json["Files"] as? JsonArray).orEmpty().sumOf { (it as? JsonObject)?.text("size")?.toLongOrNull() ?: 0L }
+        val done = json.text("BytesTransferred")?.toLongOrNull() ?: 0L
+        return if (total > 0 && done > 0) (done.toFloat() / total).coerceIn(0f, 1f) else null
+    }
 
     private fun JsonObject.toJob() = Job(
         id = text("ID") ?: text("id") ?: throw IllegalStateException("No job id"),

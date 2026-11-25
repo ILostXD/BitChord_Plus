@@ -519,6 +519,8 @@ object AppSettings {
     val hideUpcoming = MutableStateFlow(false)
     /** AutoPlay reordered to your taste (see Taste). */
     val smartQueue = MutableStateFlow(true)
+    /** Navidrome scrobbles to Last.fm/ListenBrainz itself, so plays it gets aren't sent from here too. */
+    val navidromeForwardsScrobbles = MutableStateFlow(false)
 
     /** A song no lossless copy was found for is added to the server from JioSaavn instead (lossy). Off by default. */
     val serverLossyFallback = MutableStateFlow(false)
@@ -1160,6 +1162,7 @@ object AppSettings {
         hideRecents.value = prefs.getBoolean(KEY_HIDE_RECENTS, false)
         hideUpcoming.value = prefs.getBoolean(KEY_HIDE_UPCOMING, false)
         smartQueue.value = prefs.getBoolean(KEY_SMART_QUEUE, true)
+        navidromeForwardsScrobbles.value = prefs.getBoolean(KEY_NAVIDROME_FORWARDS, false)
         serverLossyFallback.value = prefs.getBoolean(KEY_SERVER_LOSSY_FALLBACK, false)
         hideHomeVideos.value = prefs.getBoolean(KEY_HIDE_HOME_VIDEOS, false)
         hideTopPicks.value = prefs.getBoolean(KEY_HIDE_TOP_PICKS, false)
@@ -1669,6 +1672,11 @@ object AppSettings {
     fun setServerLossyFallback(value: Boolean) {
         serverLossyFallback.value = value
         prefs.edit().putBoolean(KEY_SERVER_LOSSY_FALLBACK, value).apply()
+    }
+
+    fun setNavidromeForwardsScrobbles(value: Boolean) {
+        navidromeForwardsScrobbles.value = value
+        prefs.edit().putBoolean(KEY_NAVIDROME_FORWARDS, value).apply()
     }
 
     fun setSmartQueue(value: Boolean) {
@@ -2579,6 +2587,7 @@ object AppSettings {
     private const val KEY_HIDE_RECENTS = "hide_recents"
     private const val KEY_HIDE_UPCOMING = "hide_upcoming"
     private const val KEY_SMART_QUEUE = "smart_queue"
+    private const val KEY_NAVIDROME_FORWARDS = "navidrome_forwards_scrobbles"
     private const val KEY_SERVER_LOSSY_FALLBACK = "server_lossy_fallback"
     private const val KEY_HIDE_HOME_VIDEOS = "hide_home_videos"
     private const val KEY_HIDE_TOP_PICKS = "hide_top_picks"

@@ -90,6 +90,7 @@ object ListeningRecorder {
         if (++samplesSinceFlush >= FLUSH_EVERY) {
             samplesSinceFlush = 0
             ListeningStats.flush()
+            Taste.flushPending()
         }
     }
 
@@ -107,6 +108,7 @@ object ListeningRecorder {
         playCounted = false
         samplesSinceFlush = 0
         ListeningStats.flush()
+        Taste.flushPending()
     }
 
     // ── Filling in what the queue didn't carry ──────────────────────────────

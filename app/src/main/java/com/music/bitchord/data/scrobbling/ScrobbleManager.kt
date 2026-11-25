@@ -117,6 +117,7 @@ class ScrobbleManager(
     private fun scrobbleSong(song: Song, durationSeconds: Int) {
         val scrobbleArtist = song.artist.forScrobble()
         scope.launch {
+            if (com.music.bitchord.data.sources.NavidromeListening.forwardedByServer(song)) return@launch
             LastFM
                 .scrobble(
                     artist = scrobbleArtist,
