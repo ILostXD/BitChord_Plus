@@ -1961,13 +1961,18 @@ private fun ActionPill(
     // says so.
     val haptics = rememberHaptics()
     val content = if (filled) Color.Black else MaterialTheme.colorScheme.onSurface
+    // Filled: the icon and label are punched out of the white pill, so the page shows through
+    // them, as on the artist page's Play circle. Offscreen, so the cut takes only the pill.
+    val punch = if (filled) Modifier.graphicsLayer { blendMode = BlendMode.DstOut } else Modifier
     Row(
         modifier = modifier
             .height(size)
             .clip(CircleShape)
             .then(
                 if (filled) {
-                    Modifier.background(Color.White)
+                    Modifier
+                        .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                        .background(Color.White)
                 } else {
                     Modifier
                         .background(Color.White.copy(alpha = LIGHT_FILL_ALPHA), CircleShape)
@@ -1987,7 +1992,7 @@ private fun ActionPill(
             imageVector = icon,
             contentDescription = null,
             tint = content,
-            modifier = Modifier.size(18.dp),
+            modifier = Modifier.size(18.dp).then(punch),
         )
         Spacer(Modifier.width(8.dp))
         Text(
@@ -1995,6 +2000,7 @@ private fun ActionPill(
             style = MaterialTheme.typography.titleMedium,
             color = content,
             maxLines = 1,
+            modifier = punch,
         )
     }
 }
