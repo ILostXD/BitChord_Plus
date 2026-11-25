@@ -166,7 +166,7 @@ fun BottomFadeBlur(
 ) {
     val inset = floatingBarInsets.asPaddingValues().calculateBottomPadding()
     val height by androidx.compose.animation.core.animateDpAsState(
-        targetValue = inset + if (withMiniPlayer) 140.dp else 84.dp,
+        targetValue = inset + if (withMiniPlayer) 112.dp else 64.dp,
         animationSpec = androidx.compose.animation.core.tween(220),
         label = "bottomBlurHeight",
     )
