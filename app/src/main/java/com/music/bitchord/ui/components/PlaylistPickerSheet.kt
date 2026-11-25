@@ -235,7 +235,7 @@ fun PlaylistPickerSheet(
                     )
 
                     else -> {
-                        PlaylistSearchField(query = query, onQueryChange = { query = it })
+                        ListSearchField(query = query, onQueryChange = { query = it }, stringResource(R.string.find_a_playlist))
                         val shown = remember(playlists, query) { filterPlaylists(playlists, query) { it.title } }
                         if (shown.isEmpty()) {
                             Text(
@@ -268,9 +268,9 @@ fun PlaylistPickerSheet(
     }
 }
 
-/** Find a playlist: the search box over the picker's list. */
+/** A search box over a list: the playlist picker's, and Requests'. */
 @Composable
-private fun PlaylistSearchField(query: String, onQueryChange: (String) -> Unit) {
+internal fun ListSearchField(query: String, onQueryChange: (String) -> Unit, placeholder: String) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -289,7 +289,7 @@ private fun PlaylistSearchField(query: String, onQueryChange: (String) -> Unit) 
         Box(Modifier.weight(1f)) {
             if (query.isEmpty()) {
                 Text(
-                    text = stringResource(R.string.find_a_playlist),
+                    text = placeholder,
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

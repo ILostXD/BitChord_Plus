@@ -130,11 +130,21 @@ fun NavidromeDashboardScreen(
         // By when each attempt was made, not last touched: an old failure can't cover a later success.
         visible.sortedByDescending { it.createdAt }.distinctBy(::requestKey).filter { it.job.status != "cancelled" }
     }
-    val ask = latest.filter { it.job.review }
-    val active = latest.filter { it.job.active }
-    val added = latest.filter { it.job.status == "rescanned" }.take(15)
-    val have = latest.filter { it.job.status == "in_library" || it.job.status == "skipped" }.take(15)
-    val bad = latest.filter { it.job.failed }.take(15)
+    var query by remember { mutableStateOf("") }
+    var expanded by remember { mutableStateOf(emptySet<String>()) }
+    val shown = remember(latest, query) {
+        val words = query.trim().lowercase().split(Regex("\\s+")).filter { it.isNotEmpty() }
+        if (words.isEmpty()) latest else latest.filter { info ->
+            val text = "${info.title} ${info.artist} ${info.album}".lowercase()
+            words.all { it in text }
+        }
+    }
+    val ask = shown.filter { it.job.review }
+    val active = shown.filter { it.job.active }
+    val added = shown.filter { it.job.status == "rescanned" }
+    val have = shown.filter { it.job.status == "in_library" || it.job.status == "skipped" }
+    val bad = shown.filter { it.job.failed }
+    val expand: (String) -> Unit = { expanded = expanded + it }
 
     var refreshing by remember { mutableStateOf(false) }
     fun act(block: suspend () -> Unit) = scope.launch { runCatching { block() }; refreshing = false; refresh++ }
@@ -277,9 +287,24 @@ fun NavidromeDashboardScreen(
                 }
             }
             if (server == null) return@LazyColumn
+            if (latest.size > 5) {
+                item(key = "search") {
+                    com.music.bitchord.ui.components.ListSearchField(query, { query = it }, stringResource(R.string.dashboard_search))
+                }
+            }
+            if (query.isNotBlank() && shown.isEmpty()) {
+                item(key = "no-results") {
+                    Text(
+                        text = stringResource(R.string.dashboard_no_results, query.trim()),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 32.dp, vertical = 24.dp),
+                    )
+                }
+            }
             val delete: (GlazeCompanion.JobInfo) -> Unit = { info -> remove(listOf(info), deletedLabel.format(info.title)) }
 
-            group("ask", R.string.dashboard_needs_decision, ask, null, delete) { info ->
+            group("ask", R.string.dashboard_needs_decision, ask, null, delete, expanded, expand) { info ->
                 JobRow(info, Orange, info.job.summary?.let { "$it. " + stringResource(R.string.dashboard_download_anyway) }.orEmpty()) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                         TextButton(onClick = { act { GlazeCompanion.decide(server, info.job.id, false) } }) { Text(stringResource(R.string.review_keep)) }
@@ -287,11 +312,11 @@ fun NavidromeDashboardScreen(
                     }
                 }
             }
-            group("active", R.string.dashboard_in_progress, active, R.string.dashboard_nothing_downloading, null) { info ->
+            group("active", R.string.dashboard_in_progress, active, R.string.dashboard_nothing_downloading.takeIf { query.isBlank() }, null, expanded, expand) { info ->
                 val percent = info.progress?.takeIf { info.job.status == "downloading" }?.let { " ${(it * 100).toInt()}%" }.orEmpty()
                 JobRow(info, Blue, "${kindText(info)} · ${statusText(info.job.status)}$percent", pulse = true)
             }
-            group("bad", R.string.dashboard_failed, bad, null, delete) { info ->
+            group("bad", R.string.dashboard_failed, bad, null, delete, expanded, expand) { info ->
                 val again = info.nextRetryAt?.let { retryText(it) }?.let { " · $it" }.orEmpty()
                 JobRow(info, Red, failureText(info) + again, trailing = {
                     if (info.canApprove) {
@@ -312,8 +337,8 @@ fun NavidromeDashboardScreen(
                     album.title, album.subtitle, album.coverUrl,
                 )
             }
-            group("added", R.string.dashboard_added, added, null, delete) { info -> JobRow(info, Green, kindText(info), onClick = { open(info) }) }
-            group("have", R.string.dashboard_already_have, have, null, delete) { info ->
+            group("added", R.string.dashboard_added, added, null, delete, expanded, expand) { info -> JobRow(info, Green, kindText(info), onClick = { open(info) }) }
+            group("have", R.string.dashboard_already_have, have, null, delete, expanded, expand) { info ->
                 JobRow(info, Green, info.job.summary ?: stringResource(R.string.server_download_done), onClick = { open(info) })
             }
         }
@@ -447,8 +472,14 @@ private fun LazyListScope.group(
     empty: Int?,
     /** Swipe left to delete; null where rows can't be (running downloads). */
     onDelete: ((GlazeCompanion.JobInfo) -> Unit)?,
+    /** Sections showing every row; the rest stop at [GROUP_LIMIT] with a "Show all". */
+    expanded: Set<String>,
+    onExpand: (String) -> Unit,
     row: @Composable (GlazeCompanion.JobInfo) -> Unit,
 ) {
+    val all = rows
+    val more = key !in expanded && all.size > GROUP_LIMIT
+    @Suppress("NAME_SHADOWING") val rows = if (more) all.take(GROUP_LIMIT) else all
     if (rows.isEmpty() && empty == null) return
     item(key = "h-$key") {
         Text(
@@ -474,7 +505,7 @@ private fun LazyListScope.group(
     }
     rows.forEachIndexed { index, info ->
         item(key = "$key-${info.job.id}") {
-            GroupCell(first = index == 0, last = index == rows.lastIndex) {
+            GroupCell(first = index == 0, last = index == rows.lastIndex && !more) {
                 if (index > 0) {
                     HorizontalDivider(
                         Modifier.padding(start = 80.dp),
@@ -486,7 +517,22 @@ private fun LazyListScope.group(
             }
         }
     }
+    if (more) {
+        item(key = "more-$key") {
+            GroupCell(first = false, last = true) {
+                HorizontalDivider(Modifier.padding(start = 16.dp), thickness = 0.5.dp, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.10f))
+                Text(
+                    text = stringResource(R.string.dashboard_show_all, all.size),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.fillMaxWidth().clickable { onExpand(key) }.padding(horizontal = 16.dp, vertical = 13.dp),
+                )
+            }
+        }
+    }
 }
+
+private const val GROUP_LIMIT = 15
 
 /** A row that slides away to the left over a red "delete" strip; the list's Undo brings it back. */
 @Composable

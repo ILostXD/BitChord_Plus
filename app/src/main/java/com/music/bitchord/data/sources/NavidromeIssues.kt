@@ -48,7 +48,7 @@ object NavidromeIssues {
     /** Looks for new issues and notifies once for each. A repeat of the same request is one issue. */
     suspend fun check(context: Context) {
         val server = GlazeCompanion.server() ?: return
-        runCatching { checkPreSaves(context, server) }
+        val preSaved = runCatching { checkPreSaves(context, server) }.getOrDefault(emptySet())
         val jobs = runCatching { GlazeCompanion.jobs(server) }.getOrNull() ?: return
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val seen = prefs.getStringSet(SEEN, emptySet()).orEmpty().toMutableSet()
@@ -64,6 +64,9 @@ object NavidromeIssues {
         val issues = newest.filter { (it.job.review || it.job.failed) && it.job.id !in filled }
         val fresh = issues.filter { "${it.job.id}:${it.job.status}" !in seen }
         issues.forEach { seen += "${it.job.id}:${it.job.status}" }
+        val arrived = newest.filter { it.job.status == "rescanned" }
+        val freshAdded = arrived.filter { "${it.job.id}:${it.job.status}" !in seen }
+        arrived.forEach { seen += "${it.job.id}:${it.job.status}" }
         // Keep the memory bounded: only what the companion still lists.
         val alive = jobs.map { "${it.job.id}:${it.job.status}" }.toSet()
         prefs.edit().putStringSet(SEEN, seen.filter { it in alive }.toSet()).putBoolean(STARTED, true).apply()
@@ -74,6 +77,7 @@ object NavidromeIssues {
         manager.createNotificationChannel(
             NotificationChannel(CHANNEL, context.getString(R.string.navidrome_issues_channel), NotificationManager.IMPORTANCE_DEFAULT),
         )
+        notifyAdded(context, manager, server, freshAdded, preSaved)
         val reviews = fresh.filter { it.job.review }
         val failures = fresh.filter { it.job.failed }
         reviews.take(5).forEach { notifyReview(context, manager, it) }
@@ -89,29 +93,24 @@ object NavidromeIssues {
     private const val LANDED = "landed"
 
     /** Notifies once when a Pre-Saved album has been added to the library. */
-    private suspend fun checkPreSaves(context: Context, server: SourceConfig) {
+    /** Returns the titles of every Pre-Save, so the "added" notification leaves them to this one. */
+    private suspend fun checkPreSaves(context: Context, server: SourceConfig): Set<String> {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val landed = GlazeCompanion.releases(server).filter { it.saved && (it.status == "rescanned" || it.status == "in_library") }
+        val releases = GlazeCompanion.releases(server)
+        val titles = releases.filter { it.saved }.map { it.title.lowercase() }.toSet()
+        val landed = releases.filter { it.saved && (it.status == "rescanned" || it.status == "in_library") }
         val known = prefs.getStringSet(LANDED, null)
         prefs.edit().putStringSet(LANDED, landed.map { it.id }.toSet()).apply()
         // The first look only learns what is already there.
         val fresh = if (known == null) emptyList() else landed.filter { it.id !in known }
-        val manager = context.getSystemService(NotificationManager::class.java) ?: return
-        if (fresh.isEmpty() || !manager.areNotificationsEnabled()) return
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return titles
+        if (fresh.isEmpty() || !manager.areNotificationsEnabled()) return titles
         manager.createNotificationChannel(
             NotificationChannel(PRESAVE_CHANNEL, context.getString(R.string.presave_landed_channel), NotificationManager.IMPORTANCE_DEFAULT),
         )
-        val source = ServerLibrary.source(server.id)
         fresh.take(3).forEach { release ->
             val id = release.id.hashCode()
-            val album = source?.let { runCatching { it.findAlbum(release.title, release.artist) }.getOrNull() }
-            val tap = if (album == null) openDashboard(context, id) else PendingIntent.getActivity(
-                context, id,
-                Intent(context, MainActivity::class.java)
-                    .putExtra(EXTRA_PAGE, arrayOf(ServerLibrary.pageId(server.id, ServerLibrary.Kind.ALBUM, album.id), album.title, album.subtitle, album.coverUrl))
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-            )
+            val tap = openAlbum(context, server, release.title, release.artist, id)
             manager.notify(
                 id,
                 NotificationCompat.Builder(context, PRESAVE_CHANNEL)
@@ -123,7 +122,55 @@ object NavidromeIssues {
                     .build(),
             )
         }
+        return titles
     }
+
+    /** Opens the server's album [title] by [artist], or the dashboard when it can't be found. */
+    private suspend fun openAlbum(context: Context, server: SourceConfig, title: String, artist: String, id: Int): PendingIntent {
+        val album = ServerLibrary.source(server.id)?.let { runCatching { it.findAlbum(title, GlazeCompanion.cleanArtist(artist)) }.getOrNull() }
+            ?: return openDashboard(context, id)
+        return PendingIntent.getActivity(
+            context, id,
+            Intent(context, MainActivity::class.java)
+                .putExtra(EXTRA_PAGE, arrayOf(ServerLibrary.pageId(server.id, ServerLibrary.Kind.ALBUM, album.id), album.title, album.subtitle, album.coverUrl))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+    }
+
+    /** Requests that reached the library since the last look; Pre-Saves are announced on their own. */
+    private suspend fun notifyAdded(context: Context, manager: NotificationManager, server: SourceConfig, added: List<GlazeCompanion.JobInfo>, preSaved: Set<String>) {
+        val news = added.filterNot { it.title.lowercase() in preSaved || it.album.lowercase() in preSaved }
+        if (news.isEmpty()) return
+        manager.createNotificationChannel(
+            NotificationChannel(ADDED_CHANNEL, context.getString(R.string.requests_added_channel), NotificationManager.IMPORTANCE_LOW),
+        )
+        if (news.size > 3) {
+            val id = ADDED_CHANNEL.hashCode()
+            manager.notify(id, NotificationCompat.Builder(context, ADDED_CHANNEL)
+                .setSmallIcon(R.drawable.ic_notification_logo)
+                .setContentTitle(context.getString(R.string.requests_added_many, news.size))
+                .setContentText(news.take(4).joinToString(", ") { it.title })
+                .setContentIntent(openDashboard(context, id))
+                .setAutoCancel(true)
+                .build())
+            return
+        }
+        news.forEach { info ->
+            val id = info.job.id.hashCode()
+            val album = if (info.kind == "album") info.title else info.album
+            val tap = if (album.isBlank()) openDashboard(context, id) else openAlbum(context, server, album, info.artist, id)
+            manager.notify(id, NotificationCompat.Builder(context, ADDED_CHANNEL)
+                .setSmallIcon(R.drawable.ic_notification_logo)
+                .setContentTitle(context.getString(R.string.requests_added_one, info.title))
+                .setContentText(GlazeCompanion.cleanArtist(info.artist))
+                .setContentIntent(tap)
+                .setAutoCancel(true)
+                .build())
+        }
+    }
+
+    private const val ADDED_CHANNEL = "requests_added"
 
     private const val PRESAVE_CHANNEL = "presave_landed"
 
