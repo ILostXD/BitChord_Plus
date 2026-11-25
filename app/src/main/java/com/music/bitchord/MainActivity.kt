@@ -6898,6 +6898,14 @@ private fun NavidromeBackgroundWork(
             openDashboard()
         }
     }
+    // A Pre-Save notification asked for its album.
+    val pageRequested by com.music.bitchord.data.sources.NavidromeIssues.openPage.collectAsStateWithLifecycle()
+    LaunchedEffect(pageRequested) {
+        val page = pageRequested ?: return@LaunchedEffect
+        com.music.bitchord.data.sources.NavidromeIssues.openPage.value = null
+        val id = page.getOrNull(0) ?: return@LaunchedEffect
+        viewModel.openDetail(id, page.getOrNull(1).orEmpty(), page.getOrNull(2).orEmpty(), page.getOrNull(3), BrowseType.ALBUM)
+    }
     LaunchedEffect(mode, synced, companionId) { viewModel.syncPlaylistsToServer(force = true) }
     LaunchedEffect(playlistCount) { if (playlistCount > 0) viewModel.syncPlaylistsToServer(force = true) }
     val libraryArtistNames = remember(libraryState) {

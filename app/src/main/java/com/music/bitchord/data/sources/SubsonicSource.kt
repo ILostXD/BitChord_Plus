@@ -243,6 +243,31 @@ class SubsonicSource(
         return matchIn(hits.map { Triple(it.text("id").orEmpty(), it.text("title").orEmpty(), it.text("artist").orEmpty()) }, title, artist)
     }
 
+    /** Tells the server [trackId] was played (at [timeMs]): its play count, "recently played" and any scrobbling it does. */
+    suspend fun scrobble(trackId: String, timeMs: Long) {
+        request("scrobble", "id" to trackId, "time" to timeMs.toString(), "submission" to "true")
+    }
+
+    /**
+     * Every song the server has played (title, artist, plays), a star counting as five plays.
+     * An empty search3 query lists the whole library, a page at a time.
+     */
+    suspend fun playCounts(maxSongs: Int = 20_000): List<Triple<String, String, Int>> {
+        val out = ArrayList<Triple<String, String, Int>>()
+        var offset = 0
+        while (offset < maxSongs) {
+            val page = (request("search3", "query" to "", "songCount" to "500", "songOffset" to offset.toString(), "artistCount" to "0", "albumCount" to "0")
+                ["searchResult3"] as? JsonObject)?.array("song").orEmpty().mapNotNull { it as? JsonObject }
+            page.forEach { song ->
+                val plays = (song.int("playCount") ?: 0) + if (song.isStarred()) 5 else 0
+                if (plays > 0) out += Triple(song.text("title").orEmpty(), song.text("artist").orEmpty(), plays)
+            }
+            if (page.size < 500) break
+            offset += 500
+        }
+        return out
+    }
+
     /** This server's artist called [name] (ignoring case), if it has one. */
     suspend fun findArtist(name: String): Entry? =
         (request("search3", "query" to name, "songCount" to "0", "albumCount" to "0", "artistCount" to "10")

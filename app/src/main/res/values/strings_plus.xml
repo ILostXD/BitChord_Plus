@@ -134,6 +134,11 @@
     <string name="album_from_singles_any">One</string>
     <string name="album_from_singles_half">Half</string>
     <string name="album_from_singles_all">All</string>
+    <string name="smart_queue">Smart queue</string>
+    <string name="smart_queue_subtitle">AutoPlay and radios learn from what you finish, skip and play on your server, and bring back favourites you haven\'t heard in a while</string>
+    <string name="presave_landed_channel">Pre-Saved albums</string>
+    <string name="presave_landed_title">%1$s is in your library</string>
+    <string name="presave_landed_text">Your Pre-Save of %1$s by %2$s is ready to play</string>
     <string name="companion_version">Companion %1$s</string>
     <string name="companion_up_to_date">Companion %1$s, up to date</string>
     <string name="companion_update_available">Companion %1$s. Version %2$s is out: tap to see how to update</string>

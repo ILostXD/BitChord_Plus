@@ -6,6 +6,9 @@ import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.sources.NavidromeListening
+import com.music.bitchord.data.stats.Taste
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.playback.QueueCoordinator.asQueueEntry
@@ -105,7 +108,12 @@ suspend fun loadAutoplayTracks(
     // A music video plays on with music videos, as YouTube Music does — unless
     // they would only be converted again, when the station's songs are the answer.
     val videos = seedSong.isVideo && seed == seedSong.videoId && !MusicOnlyPlayback.isActive()
-    val related = YtMusicRepository.radio(seed, preferVideo = videos).getOrElse { return Result.failure(it) }
+    val radio = YtMusicRepository.radio(seed, preferVideo = videos).getOrElse { return Result.failure(it) }
+    // Smart queue: the radio reordered to fit what you finish, skip and play on your server.
+    val related = if (AppSettings.smartQueue.value) {
+        NavidromeListening.refreshTaste()
+        Taste.smartQueue(radio)
+    } else radio
     val extra = QueueBuilder.extend(existing, related, limit, preferVideos = videos)
     if (extra.isEmpty()) return Result.success(emptyList())
 

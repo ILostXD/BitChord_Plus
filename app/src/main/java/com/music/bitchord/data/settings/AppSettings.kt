@@ -517,6 +517,8 @@ object AppSettings {
 
     /** Home's Upcoming shelf (releases due from library artists, and Pre-Saves). */
     val hideUpcoming = MutableStateFlow(false)
+    /** AutoPlay reordered to your taste (see Taste). */
+    val smartQueue = MutableStateFlow(true)
 
     /** A song no lossless copy was found for is added to the server from JioSaavn instead (lossy). Off by default. */
     val serverLossyFallback = MutableStateFlow(false)
@@ -1157,6 +1159,7 @@ object AppSettings {
         preferMusicOnly.value = prefs.getBoolean(KEY_PREFER_MUSIC_ONLY, false)
         hideRecents.value = prefs.getBoolean(KEY_HIDE_RECENTS, false)
         hideUpcoming.value = prefs.getBoolean(KEY_HIDE_UPCOMING, false)
+        smartQueue.value = prefs.getBoolean(KEY_SMART_QUEUE, true)
         serverLossyFallback.value = prefs.getBoolean(KEY_SERVER_LOSSY_FALLBACK, false)
         hideHomeVideos.value = prefs.getBoolean(KEY_HIDE_HOME_VIDEOS, false)
         hideTopPicks.value = prefs.getBoolean(KEY_HIDE_TOP_PICKS, false)
@@ -1666,6 +1669,11 @@ object AppSettings {
     fun setServerLossyFallback(value: Boolean) {
         serverLossyFallback.value = value
         prefs.edit().putBoolean(KEY_SERVER_LOSSY_FALLBACK, value).apply()
+    }
+
+    fun setSmartQueue(value: Boolean) {
+        smartQueue.value = value
+        prefs.edit().putBoolean(KEY_SMART_QUEUE, value).apply()
     }
 
     fun setHideUpcoming(value: Boolean) {
@@ -2570,6 +2578,7 @@ object AppSettings {
     private const val KEY_PREFER_MUSIC_ONLY = "prefer_music_only"
     private const val KEY_HIDE_RECENTS = "hide_recents"
     private const val KEY_HIDE_UPCOMING = "hide_upcoming"
+    private const val KEY_SMART_QUEUE = "smart_queue"
     private const val KEY_SERVER_LOSSY_FALLBACK = "server_lossy_fallback"
     private const val KEY_HIDE_HOME_VIDEOS = "hide_home_videos"
     private const val KEY_HIDE_TOP_PICKS = "hide_top_picks"

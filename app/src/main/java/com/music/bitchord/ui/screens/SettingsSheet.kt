@@ -242,6 +242,7 @@ fun SettingsScreen(
     val automixModels by AutomixModels.state.collectAsStateWithLifecycle()
     val automixPerformance by AppSettings.automixPerformanceMode.collectAsStateWithLifecycle()
     val skipSilence by AppSettings.skipSilence.collectAsStateWithLifecycle()
+    val smartQueue by AppSettings.smartQueue.collectAsStateWithLifecycle()
     val sleepTimerFadeOut by AppSettings.sleepTimerFadeOut.collectAsStateWithLifecycle()
     val dolbyAtmos by AppSettings.dolbyAtmos.collectAsStateWithLifecycle()
     val directSourceStream by AppSettings.directSourceStream.collectAsStateWithLifecycle()
@@ -958,6 +959,16 @@ fun SettingsScreen(
                         onClick = { onOpenChoice(SettingsChoiceKind.AUTOMIX_PERFORMANCE) },
                     )
                 }
+            }
+            val smartQueueTitle = stringResource(R.string.smart_queue)
+            row(smartQueueTitle, "autoplay", "radio", "queue", "taste") {
+                SettingsRow(
+                    icon = SfIcons.Radio,
+                    title = smartQueueTitle,
+                    subtitle = stringResource(R.string.smart_queue_subtitle),
+                    trailing = { IosSwitch(checked = smartQueue, onCheckedChange = AppSettings::setSmartQueue) },
+                    onClick = { AppSettings.setSmartQueue(!smartQueue) },
+                )
             }
             val skipSilenceTitle = stringResource(R.string.skip_silence)
             row(skipSilenceTitle, "silence") {

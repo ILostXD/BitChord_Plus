@@ -66,6 +66,7 @@ object ListeningRecorder {
             lastSampleAt = now
             playedThisTrack = 0L
             playCounted = false
+            Taste.listened(song, 0L, durationMs)
             return
         }
         val step = (now - lastSampleAt).coerceIn(0L, MAX_STEP_MS)
@@ -81,6 +82,8 @@ object ListeningRecorder {
         }
         val counts = !playCounted && playedThisTrack >= threshold
         if (counts) playCounted = true
+        Taste.listened(song, step, length)
+        if (counts) com.music.bitchord.data.sources.NavidromeListening.played(song, now - playedThisTrack)
 
         ListeningStats.record(enriched(song), step, counts)
 
