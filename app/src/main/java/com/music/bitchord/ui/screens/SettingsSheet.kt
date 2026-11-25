@@ -259,6 +259,7 @@ fun SettingsScreen(
     val disableBlendEffects by AppSettings.disableBlendEffects.collectAsStateWithLifecycle()
     val liquidGlass by AppSettings.liquidGlass.collectAsStateWithLifecycle()
     val glassPerformance by AppSettings.glassPerformance.collectAsStateWithLifecycle()
+    val glassBrightness by AppSettings.glassBrightness.collectAsStateWithLifecycle()
     val progressiveBlur by AppSettings.progressiveBlur.collectAsStateWithLifecycle()
     val liquidGlassSupported = isGlassSupported()
     val lyricsBlur by AppSettings.lyricsBlur.collectAsStateWithLifecycle()
@@ -1272,6 +1273,10 @@ fun SettingsScreen(
                         checked = progressiveBlur,
                         onCheckedChange = AppSettings::setProgressiveBlur,
                     )
+                }
+                val glassBrightnessTitle = stringResource(R.string.glass_brightness)
+                row(glassBrightnessTitle, "glass", "brightness", "dark", "light", "tint", divided = false) {
+                    GlassBrightnessRow(glassBrightnessTitle, glassBrightness, AppSettings::setGlassBrightness)
                 }
             }
             // Left out where the player won't honour it: a window too wide for
@@ -3060,6 +3065,30 @@ internal fun Chevron() {
         tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
         modifier = Modifier.size(20.dp),
     )
+}
+
+/** Darker to brighter liquid glass; the middle is the theme's own look, and it snaps back there. */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun GlassBrightnessRow(title: String, value: Float, onValue: (Float) -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(start = 60.dp, end = 20.dp, top = 6.dp, bottom = 10.dp)) {
+        Text(title, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
+        Slider(
+            value = value,
+            // Within a few percent of the middle is the middle, so the default is easy to find again.
+            onValueChange = { onValue(if (kotlin.math.abs(it) < 0.06f) 0f else it) },
+            valueRange = -1f..1f,
+            colors = SliderDefaults.colors(
+                thumbColor = MaterialTheme.colorScheme.primary,
+                activeTrackColor = MaterialTheme.colorScheme.primary,
+                inactiveTrackColor = MaterialTheme.colorScheme.outline,
+            ),
+        )
+        Row(Modifier.fillMaxWidth()) {
+            Text(stringResource(R.string.glass_darker), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+            Text(stringResource(R.string.glass_brighter), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
 }
 
 /** A continuous setting: label and current value on one line, track beneath. */

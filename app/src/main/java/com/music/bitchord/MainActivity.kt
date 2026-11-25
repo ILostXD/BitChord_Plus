@@ -4420,15 +4420,26 @@ private fun BitChordApp(
                     )
                 }
 
-                // Drawn before the bars so their own glass reads on top of it.
-                BottomFadeScrim(
-                    withMiniPlayer = player.song != null,
-                    // Not the wash: by the foot of the screen the page has finished
-                    // easing out of it and into this, so this is what is actually
-                    // under the tab bar.
-                    pageColor = chromePageColor,
-                    modifier = Modifier.align(Alignment.BottomCenter),
-                )
+                // Drawn before the bars so their own glass reads on top of it. With
+                // Progressive Blur on, the page blurs out under them as it does under
+                // the top bar, rather than fading into the page's colour.
+                if (reduceDynamicBlur || !glassActive || !progressiveBlur) {
+                    BottomFadeScrim(
+                        withMiniPlayer = player.song != null,
+                        // Not the wash: by the foot of the screen the page has finished
+                        // easing out of it and into this, so this is what is actually
+                        // under the tab bar.
+                        pageColor = chromePageColor,
+                        modifier = Modifier.align(Alignment.BottomCenter),
+                    )
+                } else {
+                    com.music.bitchord.ui.components.BottomFadeBlur(
+                        hazeState = hazeState,
+                        pageColor = chromePageColor,
+                        withMiniPlayer = player.song != null,
+                        modifier = Modifier.align(Alignment.BottomCenter),
+                    )
+                }
 
                 // Whichever bar is drawing reports its height here, for the
                 // guard to read at layout — never in composition, see the guard.

@@ -558,6 +558,8 @@ object AppSettings {
      * option, honoured only while [liquidGlass] is on.
      */
     val glassPerformance = MutableStateFlow(false)
+    /** Liquid glass from darker (-1) through the theme's own tint (0) to brighter frost (1). */
+    val glassBrightness = MutableStateFlow(0f)
 
     /**
      * Blurs what scrolls under the status bar and the top controls, easing out
@@ -1174,6 +1176,7 @@ object AppSettings {
         disableBlendEffects.value = prefs.getBoolean(KEY_DISABLE_BLEND_EFFECTS, false)
         liquidGlass.value = prefs.getBoolean(KEY_LIQUID_GLASS, false)
         glassPerformance.value = prefs.getBoolean(KEY_GLASS_PERFORMANCE, false)
+        glassBrightness.value = prefs.getFloat(KEY_GLASS_BRIGHTNESS, 0f)
         progressiveBlur.value = prefs.getBoolean(KEY_PROGRESSIVE_BLUR, false)
         lyricsBlur.value = prefs.getBoolean(KEY_LYRICS_BLUR, true)
         lyricsOffsetMs.value = prefs.getInt(KEY_LYRICS_OFFSET_MS, 0)
@@ -1736,6 +1739,11 @@ object AppSettings {
     fun setLiquidGlass(value: Boolean) {
         liquidGlass.value = value
         prefs.edit().putBoolean(KEY_LIQUID_GLASS, value).apply()
+    }
+
+    fun setGlassBrightness(value: Float) {
+        glassBrightness.value = value.coerceIn(-1f, 1f)
+        prefs.edit().putFloat(KEY_GLASS_BRIGHTNESS, glassBrightness.value).apply()
     }
 
     fun setGlassPerformance(value: Boolean) {
@@ -2598,6 +2606,7 @@ object AppSettings {
     private const val KEY_DISABLE_BLEND_EFFECTS = "disable_blend_effects"
     private const val KEY_LIQUID_GLASS = "liquid_glass"
     private const val KEY_GLASS_PERFORMANCE = "glass_performance"
+    private const val KEY_GLASS_BRIGHTNESS = "glass_brightness"
     private const val KEY_PROGRESSIVE_BLUR = "progressive_blur"
     private const val KEY_LYRICS_BLUR = "lyrics_blur"
     private const val KEY_LYRICS_OFFSET_MS = "lyrics_offset_ms"

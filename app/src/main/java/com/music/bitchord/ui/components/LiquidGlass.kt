@@ -68,6 +68,21 @@ private const val LENS_MAX_DP = 48f
 private const val SURFACE_OPACITY = 0.4f
 
 /**
+ * The tint laid over the blurred backdrop. At [brightness] 0 it is the theme's own
+ * ([themeTint] at [SURFACE_OPACITY]); toward -1 it deepens to a heavy dark tint, toward 1
+ * it turns to white frost, as Glaze's glass slider does. A light page under the glass
+ * (an album's colour) is where turning it up helps most.
+ */
+fun glassTint(themeTint: Color, brightness: Float): Color {
+    val base = themeTint.copy(alpha = SURFACE_OPACITY)
+    return when {
+        brightness < 0f -> androidx.compose.ui.graphics.lerp(base, Color.Black.copy(alpha = 0.68f), -brightness)
+        brightness > 0f -> androidx.compose.ui.graphics.lerp(base, Color.White.copy(alpha = 0.32f), brightness)
+        else -> base
+    }
+}
+
+/**
  * Resolution fraction the glass surface records and processes its backdrop at.
  *
  * A third, which is what Echo's `glassResolutionScale` comes to at this blur
@@ -145,16 +160,17 @@ fun Modifier.lightweightLiquidGlass(
     fallbackColor: Color,
 ): Modifier {
     val useGlass = LocalLiquidGlassEnabled.current && isGlassSupported()
-    val glassTint = if (MaterialTheme.colorScheme.surface.luminance() > 0.5f) {
+    val themeTint = if (MaterialTheme.colorScheme.surface.luminance() > 0.5f) {
         Color(0xFFFAFAFA)
     } else {
         Color(0xFF121212)
     }
     val shapeProvider = ShapeProvider { shape }
+    val brightness by AppSettings.glassBrightness.collectAsStateWithLifecycle()
 
     return clip(shape)
         .background(
-            color = if (useGlass) glassTint.copy(alpha = SURFACE_OPACITY) else fallbackColor,
+            color = if (useGlass) glassTint(themeTint, brightness) else fallbackColor,
             shape = shape,
         )
         .then(
@@ -237,7 +253,8 @@ fun Modifier.liquidGlass(
     } else {
         Color(0xFF121212)
     }
-    val surfaceTintColor = surfaceTint ?: themeTint.copy(alpha = SURFACE_OPACITY)
+    val brightness by AppSettings.glassBrightness.collectAsStateWithLifecycle()
+    val surfaceTintColor = surfaceTint ?: glassTint(themeTint, brightness)
 
     return drawBackdrop(
         backdrop = backdrop,

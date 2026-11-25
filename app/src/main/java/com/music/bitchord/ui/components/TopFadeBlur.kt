@@ -2,6 +2,7 @@ package com.music.bitchord.ui.components
 
 import androidx.compose.animation.core.EaseInOut
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.material3.MaterialTheme
@@ -140,5 +141,55 @@ fun TopBarBlur(
                 state = hazeState,
                 style = HazeMaterials.regular(MaterialTheme.colorScheme.surface),
             ),
+    )
+}
+
+/** The bottom's version of [FootFade]: the strip's top 40% fades in, so it has no edge to see. */
+private val HeadFade = Brush.verticalGradient(
+    colorStops = Array(FOOT_FADE_STOPS + 1) { i ->
+        val t = i / FOOT_FADE_STOPS.toFloat()
+        (1f - FOOT_FADE_START) * t to Color.Black.copy(alpha = EaseInOut.transform(t))
+    },
+)
+
+/**
+ * [TopFadeBlur] turned upside down, under the floating bars: with Progressive Blur on, the
+ * page blurs out under the tab bar and mini player instead of fading into a flat colour.
+ */
+@OptIn(ExperimentalHazeApi::class)
+@Composable
+fun BottomFadeBlur(
+    hazeState: HazeState,
+    pageColor: Color,
+    withMiniPlayer: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val inset = floatingBarInsets.asPaddingValues().calculateBottomPadding()
+    val height by androidx.compose.animation.core.animateDpAsState(
+        targetValue = inset + if (withMiniPlayer) 176.dp else 112.dp,
+        animationSpec = androidx.compose.animation.core.tween(220),
+        label = "bottomBlurHeight",
+    )
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(height)
+            .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+            .drawWithContent {
+                drawContent()
+                drawRect(HeadFade, blendMode = BlendMode.DstIn)
+            }
+            .hazeEffect(state = hazeState) {
+                backgroundColor = pageColor
+                tints = emptyList()
+                blurRadius = BLUR_MAX
+                noiseFactor = 0f
+                inputScale = HazeInputScale.Fixed(0.33f)
+                progressive = HazeProgressive.verticalGradient(
+                    easing = EaseInOut,
+                    startIntensity = 0f,
+                    endIntensity = 1f,
+                )
+            },
     )
 }
