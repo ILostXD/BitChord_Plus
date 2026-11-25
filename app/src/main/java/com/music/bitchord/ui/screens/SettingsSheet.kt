@@ -1259,6 +1259,10 @@ fun SettingsScreen(
             // on their own. Progressive Blur has its own switch because it costs
             // frames of its own. Reduce dynamic blur turns it off.
             if (liquidGlass && liquidGlassSupported) {
+                val glassBrightnessTitle = stringResource(R.string.glass_brightness)
+                row(glassBrightnessTitle, "glass", "brightness", "dark", "light", "tint", divided = false) {
+                    GlassBrightnessRow(glassBrightnessTitle, glassBrightness, AppSettings::setGlassBrightness)
+                }
                 val glassPerformanceTitle = stringResource(R.string.glass_performance)
                 row(glassPerformanceTitle, "glass", "performance", "refraction", "frosted", "lag", divided = false) {
                     SettingsSubRow(
@@ -1274,10 +1278,6 @@ fun SettingsScreen(
                         checked = progressiveBlur,
                         onCheckedChange = AppSettings::setProgressiveBlur,
                     )
-                }
-                val glassBrightnessTitle = stringResource(R.string.glass_brightness)
-                row(glassBrightnessTitle, "glass", "brightness", "dark", "light", "tint", divided = false) {
-                    GlassBrightnessRow(glassBrightnessTitle, glassBrightness, AppSettings::setGlassBrightness)
                 }
             }
             // Left out where the player won't honour it: a window too wide for
@@ -3082,7 +3082,7 @@ internal fun Chevron() {
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 private fun GlassBrightnessRow(title: String, value: Float, onValue: (Float) -> Unit) {
-    Column(Modifier.fillMaxWidth().padding(start = 60.dp, end = 20.dp, top = 6.dp, bottom = 10.dp)) {
+    Column(Modifier.fillMaxWidth().padding(start = ROW_INSET, end = ROW_INSET, top = 10.dp, bottom = 10.dp)) {
         Text(title, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
         Slider(
             value = value,

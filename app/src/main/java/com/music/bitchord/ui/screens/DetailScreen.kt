@@ -1900,7 +1900,8 @@ private fun ActionRow(
     val longPlay by AppSettings.artistLongPlay.collectAsStateWithLifecycle()
     // The album page's row instead (Glaze's artist pages too): a long Play pill between two
     // circles, all three the same height.
-    val side = if (longPlay) RELEASE_SIDE_BUTTON else ARTIST_SIDE_BUTTON
+    // All three as tall as the normal mode's Play circle.
+    val side = if (longPlay) ARTIST_PLAY_BUTTON else ARTIST_SIDE_BUTTON
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1922,8 +1923,9 @@ private fun ActionRow(
                 label = stringResource(R.string.play),
                 onClick = onPlay,
                 filled = true,
-                size = RELEASE_SIDE_BUTTON,
-                modifier = Modifier.width(RELEASE_PLAY_WIDTH),
+                size = ARTIST_PLAY_BUTTON,
+                large = true,
+                modifier = Modifier.weight(1f),
             )
         } else {
             PlayCircle(
@@ -1971,6 +1973,8 @@ private fun ActionPill(
     filled: Boolean,
     modifier: Modifier = Modifier,
     size: Dp = 50.dp,
+    /** A bigger icon and label, for the artist page's 70dp pill. */
+    large: Boolean = false,
 ) {
     // Resume rather than a flat tap: both start a queue, and the rising pair
     // says so.
@@ -2007,12 +2011,12 @@ private fun ActionPill(
             imageVector = icon,
             contentDescription = null,
             tint = content,
-            modifier = Modifier.size(18.dp).then(punch),
+            modifier = Modifier.size(if (large) 24.dp else 18.dp).then(punch),
         )
-        Spacer(Modifier.width(8.dp))
+        Spacer(Modifier.width(if (large) 10.dp else 8.dp))
         Text(
             text = label,
-            style = MaterialTheme.typography.titleMedium,
+            style = if (large) MaterialTheme.typography.titleLarge else MaterialTheme.typography.titleMedium,
             color = content,
             maxLines = 1,
             modifier = punch,
