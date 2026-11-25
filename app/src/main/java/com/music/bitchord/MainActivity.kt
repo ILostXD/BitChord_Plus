@@ -4422,9 +4422,9 @@ private fun BitChordApp(
 
                 // Drawn before the bars so their own glass reads on top of it. With
                 // Progressive Blur on, the page blurs out under them as it does under
-                // the top bar, rather than fading into the page's colour. Only on the
-                // artwork pages (albums, playlists, artists): Home and the rest keep the fade.
-                if (reduceDynamicBlur || !glassActive || !progressiveBlur || !isDetailVisible) {
+                // the top bar, rather than fading into the page's colour: everywhere the
+                // top blur is, except Home, which keeps its fade.
+                if (reduceDynamicBlur || !glassActive || !progressiveBlur || homeHeadingVisible) {
                     BottomFadeScrim(
                         withMiniPlayer = player.song != null,
                         // Not the wash: by the foot of the screen the page has finished
